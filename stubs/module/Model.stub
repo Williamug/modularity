@@ -1,0 +1,19 @@
+<?php
+
+namespace Modules\{{PascalName}}\Models;
+
+use Modularity\Support\Abstracts\ModuleModel;
+
+class {{PascalName}} extends ModuleModel
+{
+    protected $table = '{{table_prefix}}{{snake_name}}s';
+
+    protected $fillable = [
+        'tenant_id',
+        // Add fillable columns
+    ];
+
+    protected $casts = [
+        // Add casts
+    ];
+}

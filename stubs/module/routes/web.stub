@@ -1,0 +1,11 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use Modules\{{PascalName}}\Http\Controllers\{{PascalName}}Controller;
+
+Route::middleware(['web', 'auth', 'resolve.tenant'])
+    ->prefix('{{kebab-slug}}')
+    ->name('{{kebab-slug}}.')
+    ->group(function () {
+        Route::resource('/', {{PascalName}}Controller::class)->parameters(['' => '{{snake_name}}']);
+    });

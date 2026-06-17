@@ -1,0 +1,36 @@
+<?php
+
+namespace Modules\{{PascalName}}\Policies;
+
+use Illuminate\Auth\Access\HandlesAuthorization;
+use Modules\{{PascalName}}\Models\{{PascalName}};
+
+class {{PascalName}}Policy
+{
+    use HandlesAuthorization;
+
+    public function viewAny($user): bool
+    {
+        return $user->can('{{kebab-slug}}.view');
+    }
+
+    public function view($user, {{PascalName}} ${{snake_name}}): bool
+    {
+        return $user->can('{{kebab-slug}}.view');
+    }
+
+    public function create($user): bool
+    {
+        return $user->can('{{kebab-slug}}.create');
+    }
+
+    public function update($user, {{PascalName}} ${{snake_name}}): bool
+    {
+        return $user->can('{{kebab-slug}}.update');
+    }
+
+    public function delete($user, {{PascalName}} ${{snake_name}}): bool
+    {
+        return $user->can('{{kebab-slug}}.delete');
+    }
+}

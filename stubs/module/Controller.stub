@@ -1,0 +1,64 @@
+<?php
+
+namespace Modules\{{PascalName}}\Http\Controllers;
+
+use Illuminate\Http\Request;
+use Illuminate\Routing\Controller;
+use Modules\{{PascalName}}\Models\{{PascalName}};
+
+class {{PascalName}}Controller extends Controller
+{
+    public function index()
+    {
+        $items = {{PascalName}}::paginate(15);
+
+        return view('{{kebab-slug}}::index', compact('items'));
+    }
+
+    public function create()
+    {
+        return view('{{kebab-slug}}::create');
+    }
+
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            // Add validation rules
+        ]);
+
+        {{PascalName}}::create($validated);
+
+        return redirect()->route('{{kebab-slug}}.index')
+            ->with('success', '{{PascalName}} created successfully.');
+    }
+
+    public function show({{PascalName}} ${{snake_name}})
+    {
+        return view('{{kebab-slug}}::show', compact('{{snake_name}}'));
+    }
+
+    public function edit({{PascalName}} ${{snake_name}})
+    {
+        return view('{{kebab-slug}}::edit', compact('{{snake_name}}'));
+    }
+
+    public function update(Request $request, {{PascalName}} ${{snake_name}})
+    {
+        $validated = $request->validate([
+            // Add validation rules
+        ]);
+
+        ${{snake_name}}->update($validated);
+
+        return redirect()->route('{{kebab-slug}}.index')
+            ->with('success', '{{PascalName}} updated successfully.');
+    }
+
+    public function destroy({{PascalName}} ${{snake_name}})
+    {
+        ${{snake_name}}->delete();
+
+        return redirect()->route('{{kebab-slug}}.index')
+            ->with('success', '{{PascalName}} deleted successfully.');
+    }
+}

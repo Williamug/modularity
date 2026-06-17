@@ -1,0 +1,17 @@
+{
+    "name": "{{PascalName}}",
+    "slug": "{{kebab-slug}}",
+    "version": "1.0.0",
+    "description": "{{PascalName}} module",
+    "providers": [
+        "Modules\\{{PascalName}}\\Providers\\{{PascalName}}ServiceProvider"
+    ],
+    "permissions": [
+        "{{kebab-slug}}.view",
+        "{{kebab-slug}}.create",
+        "{{kebab-slug}}.update",
+        "{{kebab-slug}}.delete"
+    ],
+    "dependencies": [],
+    "compatibility": "^1.0"
+}

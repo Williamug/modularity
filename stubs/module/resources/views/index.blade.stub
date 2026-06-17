@@ -1,0 +1,51 @@
+@extends('layouts.app')
+
+@section('title', '{{PascalName}}')
+
+@section('content')
+<div class="container">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold">{{PascalName}}</h1>
+        <a href="{{ route('{{kebab-slug}}.create') }}" class="btn btn-primary">
+            Add {{PascalName}}
+        </a>
+    </div>
+
+    @if(session('success'))
+        <div class="alert alert-success">{{ session('success') }}</div>
+    @endif
+
+    <div class="card">
+        <table class="table">
+            <thead>
+                <tr>
+                    <th>#</th>
+                    {{-- Add column headers --}}
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @forelse($items as $item)
+                <tr>
+                    <td>{{ $item->id }}</td>
+                    {{-- Add column values --}}
+                    <td>
+                        <a href="{{ route('{{kebab-slug}}.edit', $item) }}">Edit</a>
+                        <form method="POST" action="{{ route('{{kebab-slug}}.destroy', $item) }}" style="display:inline">
+                            @csrf @method('DELETE')
+                            <button type="submit" onclick="return confirm('Delete?')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                @empty
+                <tr>
+                    <td colspan="3">No records found.</td>
+                </tr>
+                @endforelse
+            </tbody>
+        </table>
+
+        {{ $items->links() }}
+    </div>
+</div>
+@endsection

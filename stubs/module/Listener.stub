@@ -1,0 +1,17 @@
+<?php
+
+namespace Modules\{{PascalName}}\Listeners;
+
+use Modularity\Core\Events\ModuleAwareListener;
+use Modules\{{PascalName}}\Events\{{PascalName}}Created;
+
+class On{{PascalName}}Created extends ModuleAwareListener
+{
+    protected string $module = '{{kebab-slug}}';
+
+    protected function process(object $event): void
+    {
+        /** @var {{PascalName}}Created $event */
+        // Handle the {{PascalName}}Created event
+    }
+}

@@ -1,0 +1,16 @@
+<?php
+
+namespace Modules\{{PascalName}}\Events;
+
+use Modularity\Core\Events\Contracts\TenantAwareEvent;
+use Modules\{{PascalName}}\Models\{{PascalName}};
+
+class {{PascalName}}Created implements TenantAwareEvent
+{
+    public function __construct(public readonly {{PascalName}} ${{snake_name}}) {}
+
+    public function getTenantId(): int
+    {
+        return $this->{{snake_name}}->tenant_id;
+    }
+}

@@ -1,0 +1,11 @@
+<?php
+
+use Illuminate\Support\Facades\Route;
+use Modules\{{PascalName}}\Http\Controllers\{{PascalName}}Controller;
+
+Route::middleware(['auth:sanctum', 'resolve.tenant'])
+    ->prefix('{{kebab-slug}}')
+    ->name('api.{{kebab-slug}}.')
+    ->group(function () {
+        Route::apiResource('/', {{PascalName}}Controller::class)->parameters(['' => '{{snake_name}}']);
+    });

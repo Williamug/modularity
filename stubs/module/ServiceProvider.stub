@@ -1,0 +1,36 @@
+<?php
+
+namespace Modules\{{PascalName}}\Providers;
+
+use Modularity\Support\Abstracts\ModuleServiceProvider;
+use Modularity\Support\Facades\Module;
+
+class {{PascalName}}ServiceProvider extends ModuleServiceProvider
+{
+    protected string $slug = '{{kebab-slug}}';
+
+    protected string $version = '1.0.0';
+
+    protected array $listen = [
+        // \App\Events\SomeEvent::class => [
+        //     \Modules\{{PascalName}}\Listeners\SomeListener::class,
+        // ],
+    ];
+
+    protected array $livewireComponents = [
+        // '{{kebab-slug}}-component' => \Modules\{{PascalName}}\Http\Livewire\{{PascalName}}Component::class,
+    ];
+
+    protected function registerModuleNavigation(): void
+    {
+        Module::menu()->add([
+            'module'     => '{{kebab-slug}}',
+            'label'      => '{{PascalName}}',
+            'icon'       => 'squares-2x2',
+            'route'      => '{{kebab-slug}}.index',
+            'permission' => '{{kebab-slug}}.view',
+            'order'      => 100,
+            'group'      => 'general',
+        ]);
+    }
+}
