@@ -1,0 +1,60 @@
+{
+    "name": "modularity/core",
+    "description": "Transform any Laravel application into a modular, marketplace-driven platform with multi-tenant support.",
+    "type": "library",
+    "keywords": ["laravel", "modules", "modular", "multi-tenant", "saas", "marketplace"],
+    "homepage": "https://github.com/modularity/core",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Modularity",
+            "email": "hello@modularity.io"
+        }
+    ],
+    "require": {
+        "php": "^8.2",
+        "illuminate/support": "^10.0|^11.0",
+        "illuminate/database": "^10.0|^11.0",
+        "illuminate/console": "^10.0|^11.0",
+        "illuminate/events": "^10.0|^11.0",
+        "illuminate/http": "^10.0|^11.0",
+        "illuminate/filesystem": "^10.0|^11.0",
+        "illuminate/cache": "^10.0|^11.0"
+    },
+    "require-dev": {
+        "orchestra/testbench": "^8.0|^9.0",
+        "pestphp/pest": "^3.0",
+        "pestphp/pest-plugin-laravel": "^3.0",
+        "mockery/mockery": "^1.6"
+    },
+    "autoload": {
+        "psr-4": {
+            "Modularity\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Modularity\\Tests\\": "tests/"
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Modularity\\ModularityServiceProvider"
+            ],
+            "aliases": {
+                "Module": "Modularity\\Support\\Facades\\Module",
+                "Tenant": "Modularity\\Support\\Facades\\Tenant"
+            }
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "composer/package-versions-deprecated": true,
+            "pestphp/pest-plugin": true
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}

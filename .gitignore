@@ -1,0 +1,38 @@
+# Composer
+vendor/
+composer.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# PHP
+*.log
+.php_cs.cache
+
+# Testing
+.phpunit.result.cache
+coverage/
+.coverage
+
+# Node (if applicable)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# OS
+._*
+.AppleDouble
+.LSOverride
+.Spotlight-V100
+.Trashes
