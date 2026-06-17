@@ -24,6 +24,7 @@ Thumbs.db
 .phpunit.result.cache
 coverage/
 .coverage
+database/testing.sqlite
 
 # Node (if applicable)
 node_modules/
