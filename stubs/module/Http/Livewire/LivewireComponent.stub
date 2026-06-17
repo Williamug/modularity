@@ -1,0 +1,15 @@
+<?php
+
+namespace Modules\{{PascalName}}\Http\Livewire;
+
+use Livewire\Attributes\Title;
+use Livewire\Component;
+
+#[Title('{{ComponentPascalName}}')]
+class {{ComponentPascalName}} extends Component
+{
+    public function render(): \Illuminate\View\View
+    {
+        return view('{{kebab-slug}}::livewire.{{component-kebab}}');
+    }
+}
