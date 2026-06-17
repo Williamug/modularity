@@ -198,6 +198,7 @@ class ModularityServiceProvider extends ServiceProvider
 
         $this->commands([
             \Modularity\Console\Commands\MakeModuleCommand::class,
+            \Modularity\Console\Commands\MakeLivewireCommand::class,
             \Modularity\Console\Commands\InstallModuleCommand::class,
             \Modularity\Console\Commands\ActivateModuleCommand::class,
             \Modularity\Console\Commands\DeactivateModuleCommand::class,

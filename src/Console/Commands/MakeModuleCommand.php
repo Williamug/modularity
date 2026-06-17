@@ -9,7 +9,8 @@ class MakeModuleCommand extends Command
 {
     protected $signature = 'modularity:make-module
                             {name : The PascalCase module name (e.g. Library)}
-                            {--path= : Override the modules base path}';
+                            {--path= : Override the modules base path}
+                            {--livewire : Scaffold a default Livewire component alongside the module}';
 
     protected $description = 'Scaffold a new Modularity module';
 
@@ -39,6 +40,17 @@ class MakeModuleCommand extends Command
         $this->line("  1. Register autoloading in composer.json: \"Modules\\\\{$name}\\\\\": \"Modules/{$name}/src/\"");
         $this->line("  2. composer dump-autoload");
         $this->line("  3. php artisan modularity:install {$slug}");
+
+        if ($this->option('livewire')) {
+            $componentName = $name.'Index';
+            $componentKebab = $slug.'-index';
+            $this->line('');
+            $this->line("Livewire component [{$componentName}] generated.");
+            $this->line("  Register it in {$name}ServiceProvider.php:");
+            $this->line("    protected array \$livewireComponents = [");
+            $this->line("        '{$componentKebab}' => \\Modules\\{$name}\\Http\\Livewire\\{$componentName}::class,");
+            $this->line("    ];");
+        }
 
         return self::SUCCESS;
     }
@@ -70,25 +82,36 @@ class MakeModuleCommand extends Command
         $stubsBase = __DIR__.'/../../../stubs/module';
 
         $replacements = [
-            '{{PascalName}}'  => $name,
-            '{{kebab-slug}}'  => $slug,
-            '{{snake_name}}'  => $this->toSnake($name),
+            '{{PascalName}}'   => $name,
+            '{{kebab-slug}}'   => $slug,
+            '{{snake_name}}'   => $this->toSnake($name),
             '{{table_prefix}}' => $slug.'_',
         ];
 
         $files = [
-            'module.json.stub'                     => 'module.json',
-            'ServiceProvider.stub'                 => "src/Providers/{$name}ServiceProvider.php",
-            'Controller.stub'                      => "src/Http/Controllers/{$name}Controller.php",
-            'Model.stub'                           => "src/Models/{$name}.php",
-            'Event.stub'                           => "src/Events/{$name}Created.php",
-            'Listener.stub'                        => "src/Listeners/On{$name}Created.php",
-            'Policy.stub'                          => "src/Policies/{$name}Policy.php",
-            'migration.create.stub'                => 'database/migrations/'.date('Y_m_d_His')."_create_{$slug}_table.php",
-            'routes/web.stub'                      => 'routes/web.php',
-            'routes/api.stub'                      => 'routes/api.php',
-            'resources/views/index.blade.stub'     => 'resources/views/index.blade.php',
+            'module.json.stub'                 => 'module.json',
+            'ServiceProvider.stub'             => "src/Providers/{$name}ServiceProvider.php",
+            'Controller.stub'                  => "src/Http/Controllers/{$name}Controller.php",
+            'Model.stub'                       => "src/Models/{$name}.php",
+            'Event.stub'                       => "src/Events/{$name}Created.php",
+            'Listener.stub'                    => "src/Listeners/On{$name}Created.php",
+            'Policy.stub'                      => "src/Policies/{$name}Policy.php",
+            'migration.create.stub'            => 'database/migrations/'.date('Y_m_d_His')."_create_{$slug}_table.php",
+            'routes/web.stub'                  => 'routes/web.php',
+            'routes/api.stub'                  => 'routes/api.php',
+            'resources/views/index.blade.stub' => 'resources/views/index.blade.php',
         ];
+
+        if ($this->option('livewire')) {
+            $componentName = $name.'Index';
+            $componentKebab = $slug.'-index';
+
+            $replacements['{{ComponentPascalName}}'] = $componentName;
+            $replacements['{{component-kebab}}']     = $componentKebab;
+
+            $files['Http/Livewire/LivewireComponent.stub']               = "src/Http/Livewire/{$componentName}.php";
+            $files['resources/views/livewire/component.blade.stub']      = "resources/views/livewire/{$componentKebab}.blade.php";
+        }
 
         foreach ($files as $stub => $target) {
             $stubPath = $stubsBase.'/'.$stub;
