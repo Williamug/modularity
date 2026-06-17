@@ -1,0 +1,55 @@
+<?php
+
+namespace Modularity\Core\Lifecycle;
+
+use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Facades\Log;
+use Modularity\Core\Module\Exceptions\ModuleNotInstalledException;
+use Modularity\Core\Module\MigrationRunner;
+use Modularity\Core\Module\ModuleRegistry;
+use Modularity\Events\ModuleUpgraded;
+use Modularity\Models\InstalledModule;
+
+class ModuleUpgrader
+{
+    public function __construct(
+        private readonly ModuleRegistry $registry,
+        private readonly MigrationRunner $migrationRunner,
+        private readonly Dispatcher $events,
+    ) {}
+
+    public function upgrade(string $slug): InstalledModule
+    {
+        $record = $this->registry->getInstalledRecord($slug);
+
+        if (! $record) {
+            throw ModuleNotInstalledException::slug($slug);
+        }
+
+        $manifest = $this->registry->getManifest($slug);
+
+        $oldVersion = $record->version;
+        $newVersion = $manifest?->version ?? $oldVersion;
+
+        $migrationsPath = $manifest?->path.'/database/migrations';
+
+        $count = 0;
+
+        if ($migrationsPath && is_dir($migrationsPath)) {
+            $count = $this->migrationRunner->runForModule($slug, $migrationsPath);
+        }
+
+        if ($oldVersion !== $newVersion) {
+            $record->update(['version' => $newVersion]);
+            $this->registry->invalidateInstalled();
+            $this->registry->invalidateAllTenants();
+        }
+
+        if ($count > 0 || $oldVersion !== $newVersion) {
+            Log::info("[Modularity] Module [{$slug}] upgraded from {$oldVersion} to {$newVersion} ({$count} migrations run).");
+            $this->events->dispatch(new ModuleUpgraded($slug, $oldVersion, $newVersion));
+        }
+
+        return $record->fresh() ?? $record;
+    }
+}
