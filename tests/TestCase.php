@@ -30,7 +30,11 @@ abstract class TestCase extends OrchestraTestCase
         ]);
 
         $app['config']->set('modularity.cache.enabled', false);
+        $app['config']->set('modularity.cache.store', 'array');
         $app['config']->set('modularity.permissions.driver', 'null');
+
+        // Ensure cache.stores.array exists so Cache::store('array') resolves cleanly.
+        $app['config']->set('cache.stores.array', ['driver' => 'array', 'serialize' => false]);
     }
 
     protected function defineDatabaseMigrations(): void

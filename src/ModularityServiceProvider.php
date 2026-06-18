@@ -65,11 +65,16 @@ class ModularityServiceProvider extends ServiceProvider
 
     private function registerCoreServices(): void
     {
-        $this->app->singleton('modularity.tenant', TenantContext::class);
+        // Bind the concrete classes as the singletons, then expose the dotted-name
+        // aliases pointing AT them. Binding the dotted name to the concrete string
+        // *and* aliasing the concrete back to the dotted name (as was done before)
+        // creates a resolution cycle — the container ping-pongs make()->resolve()
+        // forever and exhausts memory on the first resolution.
+        $this->app->singleton(TenantContext::class);
 
-        $this->app->singleton('modularity.registry', ModuleRegistry::class);
+        $this->app->singleton(ModuleRegistry::class);
 
-        $this->app->singleton('modularity.navigation', NavigationRegistry::class);
+        $this->app->singleton(NavigationRegistry::class);
 
         $this->app->singleton('modularity.resolver', function ($app) {
             $resolverNames = config('modularity.tenancy.resolvers', ['subdomain', 'domain', 'header', 'session']);
@@ -137,11 +142,13 @@ class ModularityServiceProvider extends ServiceProvider
             );
         });
 
-        // Alias concrete classes to interface bindings
-        $this->app->alias('modularity.tenant', TenantContext::class);
-        $this->app->alias('modularity.registry', ModuleRegistry::class);
-        $this->app->alias('modularity.manager', ModuleManager::class);
-        $this->app->alias('modularity.navigation', NavigationRegistry::class);
+        // Expose dotted-name aliases pointing at the concrete singletons.
+        $this->app->alias(TenantContext::class, 'modularity.tenant');
+        $this->app->alias(ModuleRegistry::class, 'modularity.registry');
+        $this->app->alias(NavigationRegistry::class, 'modularity.navigation');
+        // ModuleManager is bound under the dotted name via a closure (buildable),
+        // so aliasing the concrete class to it is safe and does not cycle.
+        $this->app->alias(ModuleManager::class, 'modularity.manager');
     }
 
     private function registerMarketplaceBindings(): void

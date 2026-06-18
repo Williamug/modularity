@@ -72,9 +72,13 @@ class ModuleLoader
             ? $this->registry->activeFor($manifest->slug, $tenantId)
             : false;
 
-        $shouldBoot = $isActive || $this->app->runningInConsole();
-
-        if (! $shouldBoot) {
+        // Only boot a module's providers when it is active for the current tenant.
+        // Do NOT auto-boot in CLI (runningInConsole). Booting all installed modules
+        // for every artisan command — including artisan list, key:generate, etc. —
+        // was the original freeze cause. Module CLI commands should be registered
+        // by the module's own provider only when needed (e.g. in a module:run command
+        // that accepts a --tenant option), not unconditionally on every CLI invocation.
+        if (! $isActive) {
             return;
         }
 

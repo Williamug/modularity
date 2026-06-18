@@ -118,8 +118,10 @@ class ModuleRegistry
 
         try {
             $records = InstalledModule::all()->keyBy('slug')->all();
-        } catch (\Exception $e) {
-            Log::warning('[Modularity] Cannot load installed modules (database unavailable): '.$e->getMessage());
+        } catch (\Throwable $e) {
+            // Database is unavailable (e.g. migrations not run yet, connection failure).
+            // Return empty and let the caller retry on the next request/command.
+            Log::debug('[Modularity] Installed modules unavailable: '.$e->getMessage());
 
             return [];
         }
