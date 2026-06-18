@@ -3,6 +3,7 @@
 namespace Modularity\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 use Modularity\Core\Lifecycle\ModuleRemover;
 use Modularity\Core\Module\Exceptions\ModuleNotInstalledException;
 use Modularity\Core\Module\Exceptions\ModuleStillActiveException;
@@ -39,6 +40,7 @@ class RemoveModuleCommand extends Command
 
       return self::FAILURE;
     } catch (\Exception $e) {
+      Log::error('[Modularity] Removal failed for ['.$slug.']: '.$e->getMessage(), ['exception' => $e]);
       $this->error('Removal failed: ' . $e->getMessage());
 
       return self::FAILURE;

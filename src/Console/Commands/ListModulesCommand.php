@@ -17,15 +17,20 @@ class ListModulesCommand extends Command
     $tenantId = $this->option('tenant') ? (int) $this->option('tenant') : null;
     $rows     = [];
 
+    // Batch-load all active tenant counts in a single grouped query
+    $activeCounts = TenantModule::active()
+      ->selectRaw('module_slug, COUNT(*) as count')
+      ->groupBy('module_slug')
+      ->pluck('count', 'module_slug')
+      ->all();
+
     foreach ($registry->allDiscovered() as $slug => $manifest) {
       $isInstalled = $registry->isInstalled($slug);
       $isActive    = $tenantId !== null && $isInstalled
         ? $registry->activeFor($slug, $tenantId)
         : null;
 
-      $activeTenantCount = $isInstalled
-        ? TenantModule::forModule($slug)->active()->count()
-        : 0;
+      $activeTenantCount = $isInstalled ? (int) ($activeCounts[$slug] ?? 0) : 0;
 
       $status = 'discovered';
 

@@ -10,6 +10,9 @@ use Modularity\Core\Tenancy\TenantContext;
 
 class ModuleLoader
 {
+    /** @var array<int, array<string, mixed>>|null Parsed modularity packages from installed.json */
+    private ?array $composerModulePackages = null;
+
     public function __construct(
         private readonly Application $app,
         private readonly ModuleRegistry $registry,
@@ -30,17 +33,20 @@ class ModuleLoader
             return;
         }
 
-        $installedManifests = array_filter(
+        // Always filter to installed modules only. getInstalled() has a try/catch
+        // that gracefully returns [] when the database is unavailable (e.g. before
+        // migrations have run), so this is safe in all contexts including CLI.
+        $candidates = array_values(array_filter(
             $discovered,
             fn (ManifestDTO $m) => $this->registry->isInstalled($m->slug)
-        );
+        ));
 
-        if (empty($installedManifests)) {
+        if (empty($candidates)) {
             return;
         }
 
         try {
-            $sorted = (new DependencyGraph(array_values($installedManifests)))->resolve();
+            $sorted = (new DependencyGraph($candidates))->resolve();
         } catch (CircularDependencyException $e) {
             Log::error('[Modularity] '.$e->getMessage());
 
@@ -66,9 +72,6 @@ class ModuleLoader
             ? $this->registry->activeFor($manifest->slug, $tenantId)
             : false;
 
-        // In CLI context with no tenant, we still register the provider so
-        // commands and migrations are available, but the tenant gate inside
-        // ModuleServiceProvider::boot() will skip UI/route registration.
         $shouldBoot = $isActive || $this->app->runningInConsole();
 
         if (! $shouldBoot) {
@@ -121,22 +124,25 @@ class ModuleLoader
             return;
         }
 
-        $installed = json_decode(file_get_contents($installedPath), true);
-        $packages  = $installed['packages'] ?? $installed;
+        if ($this->composerModulePackages === null) {
+            $installed = json_decode(file_get_contents($installedPath), true);
+            $all       = $installed['packages'] ?? $installed;
 
-        if (! is_array($packages)) {
-            return;
+            $this->composerModulePackages = is_array($all)
+                ? array_values(array_filter($all, fn ($p) => ($p['extra']['modularity']['module'] ?? false) === true))
+                : [];
         }
 
-        foreach ($packages as $package) {
-            $isModule = ($package['extra']['modularity']['module'] ?? false) === true;
+        foreach ($this->composerModulePackages as $package) {
+            $name = $package['name'] ?? '';
 
-            if (! $isModule) {
+            // Reject empty names and anything that doesn't look like a valid
+            // Composer package name (vendor/package). This prevents path traversal
+            // via a crafted installed.json entry containing ".." sequences.
+            if ($name === '' || ! preg_match('/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i', $name)) {
                 continue;
             }
 
-            // Find the package installation path
-            $name      = $package['name'] ?? '';
             $vendorDir = base_path('vendor/'.$name);
 
             if (is_dir($vendorDir) && file_exists($vendorDir.'/module.json')) {

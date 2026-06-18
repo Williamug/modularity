@@ -118,6 +118,7 @@ class MakeModuleCommand extends Command
       $targetPath = $modulePath . '/' . $target;
 
       if (! $this->files->exists($stubPath)) {
+        $this->warn("Stub [{$stubPath}] not found; skipping [{$target}].");
         continue;
       }
 

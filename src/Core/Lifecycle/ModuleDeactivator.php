@@ -30,7 +30,7 @@ class ModuleDeactivator
 
     /**
      * Deactivates a module for every tenant that has it active.
-     * Used before module removal or on tenant deletion.
+     * Uses a single bulk UPDATE instead of N individual queries.
      */
     public function deactivateAll(string $slug): void
     {
@@ -39,13 +39,26 @@ class ModuleDeactivator
             ->pluck('tenant_id')
             ->all();
 
+        if (empty($tenantIds)) {
+            return;
+        }
+
+        TenantModule::forModule($slug)
+            ->active()
+            ->update([
+                'active'         => false,
+                'deactivated_at' => now(),
+            ]);
+
         foreach ($tenantIds as $tenantId) {
-            $this->deactivate($slug, $tenantId);
+            $this->registry->invalidateTenant($tenantId);
+            $this->events->dispatch(new ModuleDeactivated($slug, $tenantId));
         }
     }
 
     /**
      * Deactivates all modules for a given tenant.
+     * Uses a single bulk UPDATE and a single cache invalidation.
      * Wire this to your Tenant model's deleting event.
      */
     public function deactivateAllForTenant(int $tenantId): void
@@ -55,8 +68,21 @@ class ModuleDeactivator
             ->pluck('module_slug')
             ->all();
 
+        if (empty($slugs)) {
+            return;
+        }
+
+        TenantModule::forTenant($tenantId)
+            ->active()
+            ->update([
+                'active'         => false,
+                'deactivated_at' => now(),
+            ]);
+
+        $this->registry->invalidateTenant($tenantId);
+
         foreach ($slugs as $slug) {
-            $this->deactivate($slug, $tenantId);
+            $this->events->dispatch(new ModuleDeactivated($slug, $tenantId));
         }
     }
 }

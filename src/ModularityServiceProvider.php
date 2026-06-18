@@ -55,6 +55,7 @@ class ModularityServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
         $this->publishAssets();
         $this->registerCommands();
         $this->registerMiddlewareAlias();
@@ -155,7 +156,10 @@ class ModularityServiceProvider extends ServiceProvider
     private function registerPermissionDriver(): void
     {
         $this->app->singleton('modularity.permissions', function ($app) {
-            return new PermissionRegistry($app->make(PermissionDriverInterface::class));
+            return new PermissionRegistry(
+                $app->make(PermissionDriverInterface::class),
+                $app->make(ModuleRegistry::class),
+            );
         });
 
         $this->app->alias('modularity.permissions', PermissionRegistry::class);
@@ -186,8 +190,6 @@ class ModularityServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../stubs' => base_path('stubs/modularity'),
         ], 'modularity-stubs');
-
-        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
     }
 
     private function registerCommands(): void

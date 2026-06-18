@@ -3,6 +3,7 @@
 namespace Modularity\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Log;
 use Modularity\Core\Lifecycle\ModuleUpgrader;
 use Modularity\Core\Module\Exceptions\ModuleNotInstalledException;
 
@@ -26,6 +27,7 @@ class UpgradeModuleCommand extends Command
 
       return self::FAILURE;
     } catch (\Exception $e) {
+      Log::error('[Modularity] Upgrade failed for ['.$slug.']: '.$e->getMessage(), ['exception' => $e]);
       $this->error('Upgrade failed: ' . $e->getMessage());
 
       return self::FAILURE;

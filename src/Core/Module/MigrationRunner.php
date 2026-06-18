@@ -3,6 +3,7 @@
 namespace Modularity\Core\Module;
 
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Log;
 use Modularity\Models\ModuleMigrationLog;
 
 class MigrationRunner
@@ -19,20 +20,40 @@ class MigrationRunner
             return 0;
         }
 
-        Artisan::call('migrate', [
-            '--path'     => $migrationsPath,
-            '--realpath' => true,
-            '--force'    => true,
-        ]);
+        try {
+            $exitCode = Artisan::call('migrate', [
+                '--path'     => $migrationsPath,
+                '--realpath' => true,
+                '--force'    => true,
+            ]);
+        } catch (\Throwable $e) {
+            throw new \RuntimeException(
+                "[Modularity] Migration failed for module [{$slug}]: {$e->getMessage()}",
+                0,
+                $e
+            );
+        }
+
+        if ($exitCode !== 0) {
+            throw new \RuntimeException(
+                "[Modularity] Migration failed for module [{$slug}] (exit code: {$exitCode})."
+            );
+        }
+
+        Log::info("[Modularity] Ran ".count($pending)." migration(s) for module [{$slug}].");
 
         $batch = $this->nextBatch($slug);
 
         foreach ($pending as $file) {
-            ModuleMigrationLog::create([
-                'module_slug'    => $slug,
-                'migration_file' => basename($file),
-                'batch'          => $batch,
-            ]);
+            try {
+                ModuleMigrationLog::create([
+                    'module_slug'    => $slug,
+                    'migration_file' => basename($file),
+                    'batch'          => $batch,
+                ]);
+            } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+                // A concurrent process already logged this migration; skip.
+            }
         }
 
         return count($pending);
