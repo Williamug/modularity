@@ -39,7 +39,7 @@ class MakeModuleCommand extends Command
     $this->line('Next steps:');
     $this->line("  1. Register autoloading in composer.json: \"Modules\\\\{$name}\\\\\": \"Modules/{$name}/src/\"");
     $this->line("  2. composer dump-autoload");
-    $this->line("  3. php artisan modularity:install {$slug}");
+    $this->line("  3. php artisan module:install {$slug}");
 
     if ($this->option('livewire')) {
       $componentName = $name . 'Index';
