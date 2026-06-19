@@ -121,8 +121,7 @@ class ModularityServiceProvider extends ServiceProvider
 
         $this->app->singleton(ModuleDeactivator::class, function ($app) {
             return new ModuleDeactivator(
-                registry: $app->make('modularity.registry'),
-                events:   $app->make('events'),
+                events: $app->make('events'),
             );
         });
 
@@ -171,11 +170,16 @@ class ModularityServiceProvider extends ServiceProvider
 
         $this->app->alias('modularity.permissions', PermissionRegistry::class);
 
-        $this->app->singleton(PermissionDriverInterface::class, function () {
-            return match (config('modularity.permissions.driver', 'gate')) {
+        $this->app->singleton(PermissionDriverInterface::class, function ($app) {
+            $driver = config('modularity.permissions.driver', 'gate');
+
+            return match ($driver) {
+                'gate'   => new GatePermissionDriver(),
                 'spatie' => new SpatiePermissionDriver(),
                 'null'   => new NullPermissionDriver(),
-                default  => new GatePermissionDriver(),
+                // Any other value is treated as a custom FQCN implementing
+                // PermissionDriverInterface, resolved through the container.
+                default  => $app->make($driver),
             };
         });
     }

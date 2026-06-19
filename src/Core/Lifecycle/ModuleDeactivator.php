@@ -3,14 +3,12 @@
 namespace Modularity\Core\Lifecycle;
 
 use Illuminate\Contracts\Events\Dispatcher;
-use Modularity\Core\Module\ModuleRegistry;
 use Modularity\Events\ModuleDeactivated;
 use Modularity\Models\TenantModule;
 
 class ModuleDeactivator
 {
     public function __construct(
-        private readonly ModuleRegistry $registry,
         private readonly Dispatcher $events,
     ) {}
 
@@ -23,8 +21,8 @@ class ModuleDeactivator
                 'deactivated_at' => now(),
             ]);
 
-        $this->registry->invalidateTenant($tenantId);
-
+        // Cache invalidation is driven by the ModuleDeactivated event below
+        // (see CacheInvalidationListener).
         $this->events->dispatch(new ModuleDeactivated($slug, $tenantId));
     }
 
@@ -51,14 +49,13 @@ class ModuleDeactivator
             ]);
 
         foreach ($tenantIds as $tenantId) {
-            $this->registry->invalidateTenant($tenantId);
             $this->events->dispatch(new ModuleDeactivated($slug, $tenantId));
         }
     }
 
     /**
      * Deactivates all modules for a given tenant.
-     * Uses a single bulk UPDATE and a single cache invalidation.
+     * Uses a single bulk UPDATE; cache invalidation is event-driven.
      * Wire this to your Tenant model's deleting event.
      */
     public function deactivateAllForTenant(int $tenantId): void
@@ -79,8 +76,8 @@ class ModuleDeactivator
                 'deactivated_at' => now(),
             ]);
 
-        $this->registry->invalidateTenant($tenantId);
-
+        // Each ModuleDeactivated event triggers invalidation of this tenant's
+        // cache via CacheInvalidationListener.
         foreach ($slugs as $slug) {
             $this->events->dispatch(new ModuleDeactivated($slug, $tenantId));
         }

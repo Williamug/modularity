@@ -43,12 +43,13 @@ class ModuleUpgrader
 
         if ($oldVersion !== $newVersion) {
             $record->update(['version' => $newVersion]);
-            $this->registry->invalidateInstalled();
-            $this->registry->invalidateAllTenants();
         }
 
         if ($count > 0 || $oldVersion !== $newVersion) {
             Log::info("[Modularity] Module [{$slug}] upgraded from {$oldVersion} to {$newVersion} ({$count} migrations run).");
+
+            // CacheInvalidationListener clears the installed + per-tenant caches
+            // in response to this event.
             $this->events->dispatch(new ModuleUpgraded($slug, $oldVersion, $newVersion));
         }
 

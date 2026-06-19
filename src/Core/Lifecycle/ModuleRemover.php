@@ -47,8 +47,8 @@ class ModuleRemover
 
         ModuleMigrationLog::forModule($slug)->delete();
 
-        $this->registry->invalidateInstalled();
-
+        // Cache invalidation is handled by CacheInvalidationListener,
+        // which reacts to the ModuleRemoved event below.
         $this->events->dispatch(new ModuleRemoved($slug));
     }
 }

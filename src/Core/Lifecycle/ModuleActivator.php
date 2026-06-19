@@ -33,8 +33,8 @@ class ModuleActivator
             ['active' => true, 'activated_at' => now(), 'deactivated_at' => null]
         );
 
-        $this->registry->invalidateTenant($tenantId);
-
+        // CacheInvalidationListener invalidates this tenant's cache in
+        // response to the ModuleActivated event.
         $this->events->dispatch(new ModuleActivated($slug, $tenantId));
 
         return $record;
