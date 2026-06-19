@@ -1,50 +1,91 @@
 # Modularity Core
 
-Transform any Laravel application into a modular, marketplace-driven SaaS platform with first-class multi-tenant support.
+Turn any Laravel 11+ application into a modular, multi-tenant SaaS platform. Ship features as self-contained **modules** that can be installed once and switched on or off per tenant — with isolated data, navigation, permissions, and migrations.
 
-- **Module discovery** — local `Modules/` directory or Composer packages
-- **Full lifecycle** — install, activate per-tenant, upgrade, deactivate, remove
-- **Multi-tenancy** — subdomain, domain, header, or session resolution; automatic Eloquent scoping
+```bash
+composer require modularity/core
+```
+
+- **Module discovery** — from a local `Modules/` directory or Composer packages
+- **Full lifecycle** — install → activate (per tenant) → upgrade → deactivate → remove
+- **Multi-tenancy** — automatic Eloquent scoping; you stay in control of *who* the tenant is
 - **Navigation** — tenant-aware, permission-filtered menu registry
-- **Permissions** — pluggable drivers (Gate, Spatie, Null)
-- **Dependency graph** — topological sort with circular-dependency detection
-- **Marketplace-ready** — Phase 2 billing/subscription contracts already defined
+- **Permissions** — pluggable drivers (Gate, Spatie, Null), or bring your own
+- **Dependency graph** — modules declare dependencies; circular ones are rejected
+- **Marketplace-ready** — billing/subscription contracts already defined (Phase 2)
+
+> **AI assistants:** authoritative guidance for code generation lives in [`AGENTS.md`](AGENTS.md), [`.cursorrules`](.cursorrules), and [`.github/copilot-instructions.md`](.github/copilot-instructions.md).
 
 ---
 
 ## Table of Contents
 
 1. [Requirements](#requirements)
-2. [Installation](#installation)
-3. [Configuration](#configuration)
-4. [Core Concepts](#core-concepts)
+2. [How It Works](#how-it-works)
+3. [Installation](#installation)
+4. [Quick Start](#quick-start)
+5. [Configuration](#configuration)
+6. [Core Concepts](#core-concepts)
    - [Module Manifest](#module-manifest)
    - [Module Lifecycle](#module-lifecycle)
    - [Multi-Tenancy](#multi-tenancy)
    - [Navigation](#navigation)
    - [Permissions](#permissions)
-5. [Authoring a Module](#authoring-a-module)
-6. [Artisan Commands](#artisan-commands)
-7. [Facade API](#facade-api)
-8. [Dependency Injection API](#dependency-injection-api)
-9. [Events](#events)
-10. [Exceptions](#exceptions)
-11. [Database Schema](#database-schema)
-12. [Testing](#testing)
-13. [Publishing Assets](#publishing-assets)
-14. [Marketplace (Phase 2)](#marketplace-phase-2)
-15. [Troubleshooting](#troubleshooting)
+7. [Authoring a Module](#authoring-a-module)
+8. [Artisan Commands](#artisan-commands)
+9. [Facade API](#facade-api)
+10. [Dependency Injection API](#dependency-injection-api)
+11. [Events](#events)
+12. [Exceptions](#exceptions)
+13. [Database Schema](#database-schema)
+14. [Testing](#testing)
+15. [Publishing Assets](#publishing-assets)
+16. [Marketplace (Phase 2)](#marketplace-phase-2)
+17. [Troubleshooting](#troubleshooting)
+18. [License](#license)
 
 ---
 
 ## Requirements
 
-| Dependency | Version |
-|---|---|
-| PHP | `^8.2` |
-| Laravel / Illuminate | `>=11.0` |
-| [spatie/laravel-permission](https://github.com/spatie/laravel-permission) | Optional — required only when `permissions.driver = spatie` |
-| [livewire/livewire](https://livewire.laravel.com) | Optional — required only when scaffolding Livewire components |
+| Dependency | Version | Notes |
+|---|---|---|
+| PHP | `^8.2` | |
+| Laravel / Illuminate | `>=11.0` | |
+| [composer/semver](https://github.com/composer/semver) | `^3.0` | Installed automatically |
+| [spatie/laravel-permission](https://github.com/spatie/laravel-permission) | Optional | Only when `permissions.driver = spatie` |
+| [livewire/livewire](https://livewire.laravel.com) | Optional | Only when scaffolding/registering Livewire components |
+
+---
+
+## How It Works
+
+Modularity has three audiences. Knowing which layer you're in keeps the API small.
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Module authors                                            │
+│  Extend ModuleServiceProvider + ship module.json           │
+│  Extend ModuleModel (or use BelongsToTenant) for data      │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ build modules that the host app turns on
+┌──────────────────────────▼─────────────────────────────────┐
+│  Host application (you)                                    │
+│  Tenant::set()        Module::active()    Module::menu()    │
+│  php artisan module:install / module:activate              │
+└──────────────────────────┬─────────────────────────────────┘
+                           │ backed by
+┌──────────────────────────▼─────────────────────────────────┐
+│  Package internals                                         │
+│  ModuleRegistry · ModuleLoader · TenantContext · TenantScope│
+│  PermissionRegistry · NavigationRegistry · Lifecycle managers           │
+└────────────────────────────────────────────────────────────┘
+```
+
+The whole system rests on two ideas:
+
+1. **A module is active *per tenant*.** Installing a module runs its migrations and registers its permissions globally — but its routes, views, navigation, and listeners only load for tenants that have *activated* it.
+2. **You decide who the tenant is.** Modularity gives you a request-scoped `TenantContext` and automatic query scoping. It does **not** assume how your app authenticates tenants — see [Multi-Tenancy](#multi-tenancy).
 
 ---
 
@@ -54,7 +95,7 @@ Transform any Laravel application into a modular, marketplace-driven SaaS platfo
 composer require modularity/core
 ```
 
-Laravel's package auto-discovery registers the service provider and both facades automatically. If you have auto-discovery disabled, add manually to `config/app.php`:
+Laravel auto-discovery registers the service provider and the `Module` / `Tenant` facades. If you have auto-discovery disabled, register them manually in `config/app.php`:
 
 ```php
 'providers' => [
@@ -66,29 +107,63 @@ Laravel's package auto-discovery registers the service provider and both facades
 ],
 ```
 
-Publish and run migrations:
+Publish and run the infrastructure migrations (creates four `modularity_*` tables):
 
 ```bash
 php artisan vendor:publish --tag=modularity-migrations
 php artisan migrate
 ```
 
-Publish the config file (optional):
+Publish the config file (optional, but recommended):
 
 ```bash
 php artisan vendor:publish --tag=modularity-config
 ```
 
-Register the tenant middleware in your HTTP kernel (or `bootstrap/app.php` for Laravel 11):
+### Tenant resolution middleware (optional)
+
+The package ships a `ResolveTenantMiddleware` (alias `resolve.tenant`) that runs the configured resolver chain on each request. **Most apps don't need it** — calling `Tenant::set()` in your own auth flow is simpler and safer (see [Multi-Tenancy](#multi-tenancy)). If you do want the built-in chain, add the alias to a route group:
 
 ```php
-// Laravel 11 — bootstrap/app.php
+// bootstrap/app.php (Laravel 11+)
 ->withMiddleware(function (Middleware $middleware) {
-    $middleware->alias([
-        'resolve.tenant' => \Modularity\Http\Middleware\ResolveTenantMiddleware::class,
-    ]);
     $middleware->appendToGroup('web', \Modularity\Http\Middleware\ResolveTenantMiddleware::class);
 })
+```
+
+The alias `resolve.tenant` is registered automatically, so you can also attach it per-route: `->middleware('resolve.tenant')`.
+
+---
+
+## Quick Start
+
+A complete loop — scaffold a module, install it, and switch it on for a tenant.
+
+```bash
+# 1. Scaffold a module under Modules/Blog/
+php artisan module:make-module Blog
+
+# 2. Install it globally (runs the module's migrations, registers its permissions)
+php artisan module:install blog
+
+# 3. Activate it for tenant #1
+php artisan module:activate blog --tenant=1
+
+# 4. Confirm
+php artisan module:list --tenant=1
+php artisan module:status blog
+```
+
+In your application, set the current tenant (in your auth flow or your own middleware), then everything scopes automatically:
+
+```php
+use Modularity\Support\Facades\Tenant;
+use Modularity\Support\Facades\Module;
+
+Tenant::set(auth()->user()->tenant_id);
+
+Module::active('blog');                 // true — module loaded for this tenant
+Module::menu()->forTenant(Tenant::id(), auth()->user()); // visible menu items
 ```
 
 ---
@@ -99,27 +174,29 @@ Register the tenant middleware in your HTTP kernel (or `bootstrap/app.php` for L
 
 ```php
 return [
-    // Where local modules live; each subdirectory must contain module.json
+    // Where local modules live; each subdirectory must contain a module.json
     'modules_path'      => base_path('Modules'),
 
     // PSR-4 namespace prefix for scaffolded modules
     'modules_namespace' => 'Modules',
 
-    // Used for compatibility checks in module manifests
+    // Core version used for module compatibility checks
     'version' => '1.0.0',
 
     'cache' => [
         'enabled' => env('MODULARITY_CACHE', true),
-        'ttl'     => 3600,          // seconds
-        'store'   => null,          // null = default cache driver
+        'ttl'     => 3600,   // seconds
+        'store'   => null,   // null = default cache driver
     ],
 
     'tenancy' => [
-        // Resolver chain: tried in order until one returns a tenant ID
-        'resolvers' => ['subdomain', 'domain', 'header', 'session'],
-        // Column name used in all Modularity tables
+        // Built-in resolvers tried in order until one returns a tenant ID.
+        // Default is 'session' only — see the Multi-Tenancy section before
+        // enabling subdomain/domain/header (they are opt-in and security-sensitive).
+        'resolvers' => ['session'],
+        // Column name used across all Modularity tables
         'column'    => 'tenant_id',
-        // FQCN of the host app's Tenant model (enables slug/domain lookup)
+        // FQCN of your app's Tenant model (required by subdomain/domain/header resolvers)
         'model'     => env('MODULARITY_TENANT_MODEL', null),
     ],
 
@@ -134,7 +211,7 @@ return [
     ],
 
     'permissions' => [
-        // 'spatie' | 'gate' | 'null'
+        // 'gate' (default) | 'spatie' | 'null' | a custom driver FQCN
         'driver' => env('MODULARITY_PERMISSION_DRIVER', 'gate'),
     ],
 ];
@@ -144,11 +221,13 @@ return [
 
 ```dotenv
 MODULARITY_CACHE=true
-MODULARITY_PERMISSION_DRIVER=gate        # gate | spatie | null
-MODULARITY_TENANT_MODEL=App\Models\Tenant
+MODULARITY_PERMISSION_DRIVER=gate          # gate | spatie | null
+MODULARITY_TENANT_MODEL=App\Models\Tenant  # required only for subdomain/domain/header resolvers
 MODULARITY_MARKETPLACE_URL=
 MODULARITY_MARKETPLACE_KEY=
 ```
+
+> **Tip:** during development set `MODULARITY_CACHE=false` so install/activate changes are reflected immediately without flushing the registry cache.
 
 ---
 
@@ -156,7 +235,7 @@ MODULARITY_MARKETPLACE_KEY=
 
 ### Module Manifest
 
-Every module must contain a `module.json` file at its root:
+Every module declares itself in a `module.json` file at its root:
 
 ```json
 {
@@ -181,15 +260,15 @@ Every module must contain a `module.json` file at its root:
 | Field | Required | Description |
 |---|---|---|
 | `name` | Yes | Human-readable display name |
-| `slug` | Yes | Unique kebab-case identifier (e.g. `library`, `my-module`) |
+| `slug` | Yes | Unique kebab-case identifier (e.g. `library`, `billing-reports`) |
 | `version` | Yes | SemVer string |
-| `providers` | Yes | Array of fully-qualified service provider class names |
+| `providers` | Yes | Fully-qualified service provider class names |
 | `description` | No | Short description |
-| `permissions` | No | Permission strings registered at install time |
-| `dependencies` | No | Array of module slugs that must be installed first |
-| `compatibility` | No | SemVer constraint against Modularity core version |
+| `permissions` | No | Permission strings registered with the driver at install time |
+| `dependencies` | No | Module slugs that must be installed first |
+| `compatibility` | No | SemVer constraint checked against the core `version` |
 
-> **Slug format**: must match `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` (lowercase, numbers, hyphens).
+> **Slug format** must match `/^[a-z0-9]+(?:-[a-z0-9]+)*$/` — lowercase letters, digits, and single hyphens. `Library`, `my_module`, and `My Module` are all invalid.
 
 ---
 
@@ -199,63 +278,81 @@ Every module must contain a `module.json` file at its root:
 discover → install → activate (per-tenant) → [upgrade] → deactivate → remove
 ```
 
-| State | Storage | Scope |
+| State | Stored in | Scope |
 |---|---|---|
-| **Discovered** | Memory / filesystem | Global |
-| **Installed** | `modularity_installed_modules` table | Global |
-| **Active** | `modularity_tenant_modules` table | Per-tenant |
+| **Discovered** | Filesystem / Composer (in memory) | Global |
+| **Installed** | `modularity_installed_modules` | Global |
+| **Active** | `modularity_tenant_modules` | Per-tenant |
 
 **Transitions:**
 
-```
-php artisan module:install  library       # Discovered → Installed (runs migrations)
-php artisan module:activate library --tenant=1   # Installed → Active for tenant 1
-php artisan module:upgrade  library       # Runs pending migrations, bumps version
-php artisan module:deactivate library --tenant=1 # Active → Inactive for tenant 1
-php artisan module:remove   library       # Installed → Removed (never rolls back migrations)
+```bash
+php artisan module:install    library                  # Discovered → Installed (runs migrations)
+php artisan module:activate   library --tenant=1        # Installed → Active for tenant 1
+php artisan module:upgrade    library                   # Runs pending migrations, bumps version
+php artisan module:deactivate library --tenant=1        # Active → Inactive for tenant 1
+php artisan module:remove     library                   # Installed → Removed (migrations NOT rolled back)
 ```
 
-**What install does:**
-1. Validates all declared `dependencies` are already installed
-2. Runs module migrations from `database/migrations/`
-3. Registers declared permissions with the permission driver
+**What `install` does:**
+1. Validates every declared `dependency` is already installed
+2. Runs the module's migrations from `database/migrations/`
+3. Registers declared permissions with the active permission driver
 4. Creates an `InstalledModule` record
-5. Dispatches `ModuleInstalled` event
+5. Dispatches `ModuleInstalled`
 
-**What activate does:**
+**What `activate` does:**
 1. Creates or updates a `TenantModule` record with `active = true`
 2. Invalidates the registry cache for that tenant
-3. Dispatches `ModuleActivated` event
+3. Dispatches `ModuleActivated`
 
-**Module removal** does not roll back migrations. Data is preserved even after removal.
+**Key invariants:**
+- A module **cannot be activated** unless it is installed.
+- A module **cannot be removed** while any tenant still has it active — pass `--force` to auto-deactivate first.
+- **Migrations are never rolled back.** Even after `module:remove`, tenant data is preserved on purpose.
+- `install` is **idempotent** — safe to run repeatedly.
 
 ---
 
 ### Multi-Tenancy
 
-Modularity resolves the current tenant on every HTTP request via a chain of strategies:
+Modularity isolates module data per tenant by reading a single value — `TenantContext` — and scoping Eloquent queries to it. **Establishing that value is your application's job**, because only your app knows how a request maps to a tenant safely.
 
-| Resolver | Strategy |
-|---|---|
-| `subdomain` | Extracts subdomain, looks up `Tenant` model by slug/domain |
-| `domain` | Full hostname lookup in `Tenant` model |
-| `header` | Reads `X-Tenant-ID` HTTP header |
-| `session` | Reads `modularity_tenant_id` from session |
+#### Recommended: set the tenant yourself
 
-The chain runs in the order declared in `tenancy.resolvers`. The first resolver that returns a non-null ID wins.
-
-**Setting tenant context manually (e.g. in tests or CLI):**
+The simplest and safest approach is to set the tenant once you've authenticated the request:
 
 ```php
 use Modularity\Support\Facades\Tenant;
 
-Tenant::set(1);
-
-// or via DI:
-app(\Modularity\Core\Tenancy\TenantContext::class)->set(1);
+// In your own middleware, a route, or your auth pipeline:
+Tenant::set($user->tenant_id);
 ```
 
-**Automatic Eloquent scoping** — apply `BelongsToTenant` to any module model to automatically scope queries and set `tenant_id` on creation:
+That's all the package needs. Everything downstream — query scoping, `Module::active()`, navigation, settings — reads from `TenantContext`.
+
+#### Optional: built-in resolver chain
+
+If you'd rather have the package resolve the tenant from the request, register `ResolveTenantMiddleware` (see [Installation](#tenant-resolution-middleware-optional)). It runs the resolvers listed in `tenancy.resolvers`, in order, and the **first non-null result wins**. The context is automatically cleared after the response to prevent bleed across queue/Octane workers.
+
+| Resolver | Source | Default? |
+|---|---|---|
+| `session` | `modularity_tenant_id` in the session | ✅ enabled by default |
+| `subdomain` | First subdomain segment, looked up in your `Tenant` model | ⚠️ opt-in |
+| `domain` | Full hostname, looked up in your `Tenant` model | ⚠️ opt-in |
+| `header` | `X-Tenant-ID` request header, verified against your `Tenant` model | ⚠️ opt-in |
+
+> **⚠️ Security:** `subdomain`, `domain`, and `header` read attacker-controllable input. A resolved tenant ID is **identity, not authorization** — always confirm the authenticated user actually belongs to that tenant before trusting it. These resolvers require `MODULARITY_TENANT_MODEL` to be set so the value can be validated against a real record. The default chain is `['session']` precisely because it is host-controlled.
+
+You can also list a custom resolver by FQCN (any class implementing `TenantResolverInterface`):
+
+```php
+'resolvers' => ['session', \App\Tenancy\JwtTenantResolver::class],
+```
+
+#### Automatic Eloquent scoping
+
+Apply `BelongsToTenant` to any model to scope every query to the current tenant and set `tenant_id` automatically on insert:
 
 ```php
 use Modularity\Support\Traits\BelongsToTenant;
@@ -263,52 +360,53 @@ use Illuminate\Database\Eloquent\Model;
 
 class Book extends Model
 {
-    use BelongsToTenant;
-    // All queries automatically filtered by current tenant_id
+    use BelongsToTenant; // queries filtered by tenant_id; tenant_id set on create
 }
 ```
 
-**Accessing tenant context:**
+Module models can extend `ModuleModel`, which already includes the trait.
+
+#### Reading tenant context
 
 ```php
 use Modularity\Support\Facades\Tenant;
 
-$id    = Tenant::id();        // ?int — null if not resolved
-$isSet = Tenant::isSet();     // bool
-$id    = Tenant::assertSet(); // int — throws TenantNotResolvedException if null
-Tenant::forget();             // Clear context
+Tenant::id();        // ?int — current tenant, or null if not set
+Tenant::isSet();     // bool
+Tenant::assertSet(); // int — throws TenantNotResolvedException when null
+Tenant::forget();    // clear the context
 ```
 
 ---
 
 ### Navigation
 
-Module service providers register menu items during boot. The registry filters them by active module and user permission:
+Modules register menu items during boot. The registry returns only items whose module is active for the tenant and whose permission (if any) the user holds.
 
-**Registering a menu item:**
+**Register an item** (typically in your provider's `registerModuleNavigation()`):
 
 ```php
-// In your ModuleServiceProvider::registerModuleNavigation()
 use Modularity\Support\Facades\Module;
 
 Module::menu()->add([
-    'module'     => 'library',
+    'module'     => 'library',     // owning module slug (used for the active check)
     'label'      => 'Library',
     'icon'       => 'book-open',
     'route'      => 'library.index',
-    'permission' => 'library.view',   // optional
-    'order'      => 50,               // lower = earlier (default: 100)
-    'group'      => 'content',        // default: 'general'
+    'permission' => 'library.view', // optional — item hidden if the user lacks it
+    'order'      => 50,             // ascending; lower shows first (default 100)
+    'group'      => 'content',      // default 'general'
 ]);
 ```
 
-**Rendering the menu in a Blade view:**
+**Render in a Blade view:**
 
 ```php
 use Modularity\Support\Facades\Module;
+use Modularity\Support\Facades\Tenant;
 
-// Flat, sorted by 'order':
-$items = Module::menu()->forTenant(Tenant::id(), auth()->user());
+// Flat list, sorted by 'order':
+$items  = Module::menu()->forTenant(Tenant::id(), auth()->user());
 
 // Grouped by 'group':
 $groups = Module::menu()->forTenantGrouped(Tenant::id(), auth()->user());
@@ -318,11 +416,11 @@ $groups = Module::menu()->forTenantGrouped(Tenant::id(), auth()->user());
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `module` | `string` | — | Owning module slug (used for active check) |
+| `module` | `string` | — | Owning module slug |
 | `label` | `string` | — | Display text |
 | `route` | `string` | — | Named Laravel route |
-| `icon` | `string` | `null` | Icon identifier (e.g. Heroicons name) |
-| `permission` | `string` | `null` | Gate ability — item hidden if user lacks it |
+| `icon` | `string` | `null` | Icon identifier (e.g. a Heroicons name) |
+| `permission` | `string` | `null` | Gate ability; item hidden if the user lacks it |
 | `order` | `int` | `100` | Sort order (ascending) |
 | `group` | `string` | `general` | Group label for grouped rendering |
 | `children` | `array` | `[]` | Nested menu items |
@@ -331,21 +429,22 @@ $groups = Module::menu()->forTenantGrouped(Tenant::id(), auth()->user());
 
 ### Permissions
 
-Three drivers are available. Set via `MODULARITY_PERMISSION_DRIVER`.
+Permissions declared in `module.json` are registered automatically at install time through a pluggable driver.
 
 | Driver | Config value | Requires |
 |---|---|---|
-| Laravel Gate | `gate` | Nothing extra |
+| Laravel Gate | `gate` (default) | Nothing extra |
 | Spatie Permission | `spatie` | `spatie/laravel-permission` |
-| Null (no-op) | `null` | Nothing — all checks return `true` |
+| Null (no-op) | `null` | Nothing — all checks return `true` (useful in tests) |
+| Custom | any FQCN | A class implementing `PermissionDriverInterface` |
 
-Permissions declared in `module.json` are registered automatically at install time. Using the Gate driver, they become abilities on Laravel's `Gate` instance.
+Set the driver via `MODULARITY_PERMISSION_DRIVER`. To use your own system, point the config value at a class implementing `Modularity\Core\Permissions\Contracts\PermissionDriverInterface` — it's resolved from the container, so it may declare its own dependencies.
 
 ```php
-// Check programmatically:
+// Check via the registry:
 Module::permissions()->userCan($user, 'library.view');
 
-// Or use standard Laravel Gate/Policy:
+// Or use standard Laravel Gate / policies (Gate driver registers abilities for you):
 $this->authorize('library.view');
 Gate::allows('library.create');
 ```
@@ -358,11 +457,10 @@ Gate::allows('library.create');
 
 ```bash
 php artisan module:make-module Library
-# With Livewire:
-php artisan module:make-module Library --livewire
+php artisan module:make-module Library --livewire   # also scaffold a Livewire component
 ```
 
-This creates `Modules/Library/` with the following structure:
+This generates `Modules/Library/`:
 
 ```
 Modules/Library/
@@ -373,11 +471,10 @@ Modules/Library/
 │   ├── Http/
 │   │   ├── Controllers/
 │   │   │   └── LibraryController.php
-│   │   └── Livewire/              (with --livewire)
+│   │   └── Livewire/                 (with --livewire)
 │   │       └── LibraryComponent.php
 │   ├── Models/
 │   │   └── Library.php
-│   ├── Services/
 │   ├── Events/
 │   │   └── LibraryCreated.php
 │   ├── Listeners/
@@ -397,6 +494,8 @@ Modules/Library/
 
 ### Service Provider
 
+Every module provides a service provider that extends `ModuleServiceProvider`. The base class handles the heavy lifting — routes, views, listeners, Livewire components, and navigation are wired up automatically **only when the module is active for the current tenant**.
+
 ```php
 namespace Modules\Library\Providers;
 
@@ -405,19 +504,19 @@ use Modularity\Support\Facades\Module;
 
 class LibraryServiceProvider extends ModuleServiceProvider
 {
-    // REQUIRED: must match the slug in module.json
+    // REQUIRED — must match the slug in module.json exactly.
     protected string $slug = 'library';
 
     protected string $version = '1.0.0';
 
-    // Event → Listener wiring (auto-registered when module is active)
+    // Event → Listener wiring (registered only while the module is active)
     protected array $listen = [
         \Modules\Library\Events\LibraryCreated::class => [
             \Modules\Library\Listeners\OnLibraryCreated::class,
         ],
     ];
 
-    // Livewire component aliases (auto-registered when module is active)
+    // Livewire component aliases (registered only while the module is active)
     protected array $livewireComponents = [
         'library-books' => \Modules\Library\Http\Livewire\BooksComponent::class,
     ];
@@ -437,31 +536,9 @@ class LibraryServiceProvider extends ModuleServiceProvider
 }
 ```
 
-> **Important:** `ModuleServiceProvider::boot()` is a no-op when the module is not active for the current tenant. Routes, views, listeners, and navigation items are only registered when `Module::active($slug)` returns `true`.
+> **Important:** `boot()` is a no-op when the module is inactive for the current tenant — that's the gate that makes modules switchable. Put anything that must run unconditionally (container bindings, etc.) in `register()` instead.
 
-### Module Manifest (`module.json`)
-
-```json
-{
-    "name": "Library",
-    "slug": "library",
-    "version": "1.0.0",
-    "description": "Digital library management",
-    "providers": [
-        "Modules\\Library\\Providers\\LibraryServiceProvider"
-    ],
-    "permissions": [
-        "library.view",
-        "library.create",
-        "library.update",
-        "library.delete"
-    ],
-    "dependencies": [],
-    "compatibility": "^1.0"
-}
-```
-
-### Tenant-Scoped Models
+### Tenant-scoped models
 
 Extend `ModuleModel` (which already uses `BelongsToTenant`):
 
@@ -473,11 +550,11 @@ use Modularity\Support\Abstracts\ModuleModel;
 class Book extends ModuleModel
 {
     protected $fillable = ['title', 'author', 'isbn'];
-    // tenant_id is automatically set on create and filtered on all queries
+    // tenant_id is set automatically on create and filtered on every query
 }
 ```
 
-Or apply the trait to any existing model:
+…or apply the trait to any existing model:
 
 ```php
 use Modularity\Support\Traits\BelongsToTenant;
@@ -490,10 +567,10 @@ class Book extends Model
 
 ### Routes
 
-Routes are auto-loaded when the module is active. No manual registration needed:
+Route files are auto-loaded when the module is active — no manual registration, and **no need to re-check `Module::active()` inside them**:
 
 ```php
-// routes/web.php — automatically wrapped in 'web' middleware group
+// routes/web.php — wrapped in the 'web' middleware group
 Route::middleware(['auth'])->group(function () {
     Route::get('/library', [LibraryController::class, 'index'])->name('library.index');
     Route::get('/library/{book}', [LibraryController::class, 'show'])->name('library.show');
@@ -501,7 +578,7 @@ Route::middleware(['auth'])->group(function () {
 ```
 
 ```php
-// routes/api.php — automatically wrapped in 'api' middleware and prefixed with /api
+// routes/api.php — wrapped in the 'api' group and prefixed with /api
 Route::middleware(['auth:sanctum'])->group(function () {
     Route::apiResource('books', BookApiController::class);
 });
@@ -509,17 +586,16 @@ Route::middleware(['auth:sanctum'])->group(function () {
 
 ### Views
 
-View files in `resources/views/` are auto-loaded under the module's slug namespace:
+Views in `resources/views/` are namespaced under the module slug:
 
 ```php
-// In a controller:
 return view('library::index', compact('books'));
 return view('library::books.show', compact('book'));
 ```
 
 ### Migrations
 
-Place migrations in `database/migrations/`. They run at `module:install` time and are tracked in `modularity_migration_log`:
+Place migrations in `database/migrations/` (relative to `module.json`). They run at `module:install` and are tracked in `modularity_migration_log`. Always include a `tenant_id` column on tenant-scoped tables:
 
 ```php
 // database/migrations/2024_01_01_000001_create_books_table.php
@@ -528,7 +604,7 @@ return new class extends Migration {
     {
         Schema::create('books', function (Blueprint $table) {
             $table->id();
-            $table->unsignedBigInteger('tenant_id')->index();
+            $table->unsignedBigInteger('tenant_id')->index(); // required for isolation
             $table->string('title');
             $table->string('author');
             $table->timestamps();
@@ -537,23 +613,25 @@ return new class extends Migration {
 };
 ```
 
-### Module-specific Settings
+### Per-tenant module settings
 
-Per-tenant settings are stored as JSON in `modularity_tenant_modules.settings`. Access them via:
+Settings are stored as JSON in `modularity_tenant_modules.settings`:
 
 ```php
-// Get a setting with a default:
+// Read with a default (returns the default when no tenant is set):
 $pageSize = Module::config('library', 'pagination.per_page', 15);
 
-// Update settings (e.g. in an admin controller):
-TenantModule::forTenant($tenantId)->forModule('library')->update([
-    'settings' => ['pagination' => ['per_page' => 25]],
-]);
+// Write (e.g. in an admin controller):
+use Modularity\Models\TenantModule;
+
+TenantModule::forTenant(Tenant::id())
+    ->forModule('library')
+    ->update(['settings->pagination->per_page' => 25]);
 ```
 
-### Publishing a Module via Composer
+### Distributing a module via Composer
 
-To distribute a module as a Composer package, add this to the module's `composer.json`:
+To ship a module as a Composer package, add this to its `composer.json` and include a `module.json` at the package root:
 
 ```json
 {
@@ -565,185 +643,71 @@ To distribute a module as a Composer package, add this to the module's `composer
 }
 ```
 
-Modularity will automatically discover it alongside local modules.
+Modularity reads `vendor/composer/installed.json` and discovers such packages alongside local modules.
 
 ---
 
 ## Artisan Commands
 
-### `module:make-module`
-
-Scaffold a new module directory with all boilerplate.
-
-```bash
-php artisan module:make-module <Name> [--path=] [--livewire]
-```
-
-| Option | Description |
+| Command | Purpose |
 |---|---|
-| `Name` | PascalCase module name (e.g. `Library`, `BillingReports`) |
-| `--path` | Override the output directory (default: `Modules/<Name>`) |
-| `--livewire` | Also scaffold a Livewire component |
+| `module:make-module <Name> [--path=] [--livewire]` | Scaffold a new module directory |
+| `module:make-livewire <slug> <ComponentName>` | Scaffold a Livewire component in a module |
+| `module:install <slug> [--path=]` | Install globally (runs migrations, registers permissions) |
+| `module:activate <slug> --tenant=<id>` | Activate a module for one tenant |
+| `module:deactivate <slug> --tenant=<id> \| --all-tenants` | Deactivate for one tenant or all |
+| `module:upgrade <slug>` | Run pending module migrations and bump the version |
+| `module:remove <slug> [--force]` | Remove a module (`--force` deactivates all tenants first) |
+| `module:list [--tenant=<id>]` | List discovered/installed modules (+ activation with `--tenant`) |
+| `module:status <slug>` | Detailed status for one module |
 
----
-
-### `module:install`
-
-Install a module globally (runs migrations, registers permissions).
-
-```bash
-php artisan module:install <slug> [--path=]
-```
-
-| Option | Description |
-|---|---|
-| `slug` | Module slug as declared in `module.json` |
-| `--path` | Explicit path to `module.json` (for modules not yet discovered) |
-
-Idempotent: safe to run multiple times.
-
----
-
-### `module:activate`
-
-Activate a module for a specific tenant.
-
-```bash
-php artisan module:activate <slug> --tenant=<id>
-```
-
-The module must be installed before it can be activated.
-
----
-
-### `module:deactivate`
-
-Deactivate a module for a specific tenant or all tenants.
-
-```bash
-php artisan module:deactivate <slug> --tenant=<id>
-php artisan module:deactivate <slug> --all-tenants
-```
-
----
-
-### `module:upgrade`
-
-Run pending migrations for an installed module and bump its version.
-
-```bash
-php artisan module:upgrade <slug>
-```
-
----
-
-### `module:remove`
-
-Remove a module from the platform. Does **not** roll back migrations.
-
-```bash
-php artisan module:remove <slug> [--force]
-```
-
-| Option | Description |
-|---|---|
-| `--force` | Auto-deactivate all tenants before removal. Without this flag, the command aborts if any tenant has the module active. |
-
----
-
-### `module:list`
-
-List all discovered, installed, and active modules.
-
-```bash
-php artisan module:list [--tenant=<id>]
-```
-
-Shows slug, name, version, installed status, and (with `--tenant`) whether the module is active for that tenant.
-
----
-
-### `module:status`
-
-Show detailed status for a specific module.
-
-```bash
-php artisan module:status <slug>
-```
-
----
-
-### `module:make-livewire`
-
-Scaffold a Livewire component within a module context.
-
-```bash
-php artisan module:make-livewire <slug> <ComponentName>
-```
+Notes:
+- `--path` on `make-module`/`install` points at a `module.json` that hasn't been discovered yet.
+- `module:install` is idempotent. `module:remove` never rolls back migrations.
+- Without `--force`, `module:remove` aborts if any tenant still has the module active.
 
 ---
 
 ## Facade API
 
-### `Module` facade
+### `Module`
 
 ```php
 use Modularity\Support\Facades\Module;
 
-// Check if a module is active for the current tenant
-Module::active(string $slug): bool
-
-// Check if a module is active for a specific tenant
+Module::active(string $slug): bool                 // active for the current tenant
 Module::activeFor(string $slug, int $tenantId): bool
-
-// Check if a module is globally installed
-Module::installed(string $slug): bool
-
-// Check if a module has been discovered (local or Composer)
-Module::discovered(string $slug): bool
-
-// Access the NavigationRegistry
+Module::installed(string $slug): bool              // globally installed
+Module::discovered(string $slug): bool             // present on filesystem/Composer
 Module::menu(): NavigationRegistry
-
-// Access the PermissionRegistry
 Module::permissions(): PermissionRegistry
-
-// Get a per-tenant module setting
 Module::config(string $slug, string $key, mixed $default = null): mixed
-
-// Access the underlying ModuleRegistry
 Module::registry(): ModuleRegistry
 ```
 
-### `Tenant` facade
+### `Tenant`
 
 ```php
 use Modularity\Support\Facades\Tenant;
 
-Tenant::set(int $tenantId): void    // Set current tenant
-Tenant::id(): ?int                   // Get current tenant ID (null if not set)
-Tenant::isSet(): bool                // Check if a tenant is active
-Tenant::forget(): void               // Clear the current tenant
-Tenant::assertSet(): int             // Get ID or throw TenantNotResolvedException
+Tenant::set(int $tenantId): void
+Tenant::id(): ?int
+Tenant::isSet(): bool
+Tenant::forget(): void
+Tenant::assertSet(): int   // throws TenantNotResolvedException if null
 ```
 
 ---
 
 ## Dependency Injection API
 
-All core services are available via Laravel's service container:
+Every core service is a container singleton. Inject the orchestrator or specific lifecycle classes instead of touching internals:
 
 ```php
 use Modularity\Core\Module\ModuleManager;
-use Modularity\Core\Module\ModuleRegistry;
-use Modularity\Core\Tenancy\TenantContext;
-use Modularity\Core\Navigation\NavigationRegistry;
-use Modularity\Core\Permissions\PermissionRegistry;
 use Modularity\Core\Lifecycle\ModuleInstaller;
 use Modularity\Core\Lifecycle\ModuleActivator;
 use Modularity\Core\Lifecycle\ModuleDeactivator;
-use Modularity\Core\Lifecycle\ModuleUpgrader;
-use Modularity\Core\Lifecycle\ModuleRemover;
 
 class SaasAdminController extends Controller
 {
@@ -755,20 +719,31 @@ class SaasAdminController extends Controller
 
     public function install(string $slug): void
     {
-        $this->installer->install($slug);
+        $this->installer->install($slug);            // returns InstalledModule
     }
 
-    public function activateForTenant(string $slug, int $tenantId): void
+    public function activate(string $slug, int $tenantId): void
     {
-        $this->activator->activate($slug, $tenantId);
+        $this->activator->activate($slug, $tenantId); // returns TenantModule
     }
 }
 ```
 
-### ModuleRegistry
+**Lifecycle signatures:**
 
 ```php
-$registry = app(ModuleRegistry::class);
+$installer->install(string $slug, ?string $path = null): InstalledModule
+$activator->activate(string $slug, int $tenantId): TenantModule
+$deactivator->deactivate(string $slug, int $tenantId): void
+$deactivator->deactivateAll(string $slug): void
+$upgrader->upgrade(string $slug): InstalledModule
+$remover->remove(string $slug, bool $force = false): void
+```
+
+**ModuleRegistry:**
+
+```php
+$registry = app(\Modularity\Core\Module\ModuleRegistry::class);
 
 $registry->getManifest(string $slug): ?ManifestDTO
 $registry->getInstalledRecord(string $slug): ?InstalledModule
@@ -779,10 +754,10 @@ $registry->invalidateInstalled(): void
 $registry->invalidateActive(int $tenantId): void
 ```
 
-### NavigationRegistry
+**NavigationRegistry:**
 
 ```php
-$nav = Module::menu(); // or app(NavigationRegistry::class)
+$nav = Module::menu(); // or app(\Modularity\Core\Navigation\NavigationRegistry::class)
 
 $nav->add(array|MenuItem $item): void
 $nav->forTenant(int $tenantId, ?object $user = null): Collection
@@ -795,7 +770,7 @@ $nav->flush(): void
 
 ## Events
 
-Listen to module lifecycle events anywhere in your application:
+Listen anywhere in your application — register listeners in your `EventServiceProvider`:
 
 ```php
 use Modularity\Events\ModuleInstalled;
@@ -804,17 +779,14 @@ use Modularity\Events\ModuleDeactivated;
 use Modularity\Events\ModuleUpgraded;
 use Modularity\Events\ModuleRemoved;
 
-// In EventServiceProvider:
 protected $listen = [
-    ModuleInstalled::class  => [SendWelcomeNotification::class],
-    ModuleActivated::class  => [ProvisionTenantResources::class],
+    ModuleInstalled::class   => [SendWelcomeNotification::class],
+    ModuleActivated::class   => [ProvisionTenantResources::class],
     ModuleDeactivated::class => [RevokeAccess::class],
-    ModuleUpgraded::class   => [NotifyAdmins::class],
-    ModuleRemoved::class    => [CleanupArtifacts::class],
+    ModuleUpgraded::class    => [NotifyAdmins::class],
+    ModuleRemoved::class     => [CleanupArtifacts::class],
 ];
 ```
-
-**Event payloads:**
 
 | Event | Properties |
 |---|---|
@@ -826,28 +798,29 @@ protected $listen = [
 
 `ModuleActivated` and `ModuleDeactivated` implement `TenantAwareEvent`.
 
+> Listeners declared in a module's own `$listen` array only fire while that module is active. For work that must run on *first* activation (provisioning, seeding), listen in the **host app's** `EventServiceProvider` instead.
+
 ---
 
 ## Exceptions
 
-All exceptions are in `Modularity\Core\Module\Exceptions\` or `Modularity\Core\Tenancy\Exceptions\`:
-
-| Exception | When thrown |
-|---|---|
-| `ModuleNotFoundException` | Slug not found in registry |
-| `ModuleNotInstalledException` | Activation attempted on uninstalled module |
-| `ModuleAlreadyInstalledException` | Install attempted on already-installed module |
-| `ModuleStillActiveException` | Remove attempted while tenants still have module active |
-| `DependencyNotInstalledException` | Install attempted when a declared dependency is missing |
-| `InvalidManifestException` | `module.json` is malformed or missing required fields |
-| `CircularDependencyException` | Circular dependency detected in dependency graph |
-| `TenantNotResolvedException` | `Tenant::assertSet()` called with no active tenant |
+| Exception | Namespace | When thrown |
+|---|---|---|
+| `ModuleNotFoundException` | `Core\Module\Exceptions` | Slug not found in the registry |
+| `ModuleNotInstalledException` | `Core\Module\Exceptions` | Activation attempted before install |
+| `ModuleAlreadyInstalledException` | `Core\Module\Exceptions` | Install attempted on an installed module |
+| `ModuleStillActiveException` | `Core\Module\Exceptions` | Remove attempted while tenants still active |
+| `DependencyNotInstalledException` | `Core\Module\Exceptions` | A declared dependency is missing at install |
+| `IncompatibleModuleException` | `Core\Module\Exceptions` | `compatibility` constraint not satisfied |
+| `InvalidManifestException` | `Core\Module\Exceptions` | `module.json` malformed or missing required fields |
+| `CircularDependencyException` | `Core\Module\Exceptions` | Cycle detected in the dependency graph |
+| `TenantNotResolvedException` | `Core\Tenancy\Exceptions` | `Tenant::assertSet()` called with no tenant |
 
 ---
 
 ## Database Schema
 
-Modularity creates four tables, all prefixed with `modularity_` (configurable):
+Four tables, all prefixed with `modularity_` (configurable via `migrations.table_prefix`).
 
 ### `modularity_installed_modules`
 
@@ -857,23 +830,21 @@ Modularity creates four tables, all prefixed with `modularity_` (configurable):
 | `slug` | `varchar` UNIQUE | Module slug |
 | `name` | `varchar` | Display name |
 | `version` | `varchar` | SemVer |
-| `checksum` | `varchar` nullable | MD5 of `module.json` |
+| `checksum` | `varchar` nullable | Hash of `module.json` |
 | `status` | `enum` | `installed` or `errored` |
 | `installed_at` | `timestamp` | |
-| `created_at` | `timestamp` | |
-| `updated_at` | `timestamp` | |
+| `created_at` / `updated_at` | `timestamp` | |
 
 ### `modularity_tenant_modules`
 
 | Column | Type | Description |
 |---|---|---|
 | `id` | `bigint` PK | |
-| `tenant_id` | `bigint` | FK to tenant (application-defined) |
+| `tenant_id` | `bigint` | Application-defined tenant FK |
 | `module_slug` | `varchar` | Module slug |
 | `active` | `boolean` | Whether the module is currently active |
 | `settings` | `json` nullable | Per-tenant module configuration |
-| `activated_at` | `timestamp` nullable | |
-| `deactivated_at` | `timestamp` nullable | |
+| `activated_at` / `deactivated_at` | `timestamp` nullable | |
 
 Unique constraint: `(tenant_id, module_slug)`.
 
@@ -886,8 +857,7 @@ Unique constraint: `(tenant_id, module_slug)`.
 | `module_slug` | `varchar` | |
 | `status` | `enum` | `active`, `trial`, `free`, `cancelled` |
 | `billing_cycle` | `enum` nullable | `monthly`, `yearly` |
-| `starts_at` | `timestamp` nullable | |
-| `expires_at` | `timestamp` nullable | |
+| `starts_at` / `expires_at` | `timestamp` nullable | |
 
 Phase 2 — currently unpopulated.
 
@@ -897,7 +867,7 @@ Phase 2 — currently unpopulated.
 |---|---|---|
 | `id` | `bigint` PK | |
 | `module_slug` | `varchar` | Owning module |
-| `migration_file` | `varchar` | Migration filename (without path) |
+| `migration_file` | `varchar` | Migration filename (no path) |
 | `batch` | `int` | Batch number |
 | `ran_at` | `timestamp` | |
 
@@ -905,34 +875,44 @@ Phase 2 — currently unpopulated.
 
 ## Testing
 
-Extend `Modularity\Tests\TestCase` for pre-configured test cases:
+Extend `Modularity\Tests\TestCase` for a pre-configured environment:
 
 ```php
 use Modularity\Tests\TestCase;
+use Modularity\Support\Facades\Tenant;
 
 class LibraryTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+        Tenant::set(1);
+    }
+
+    protected function tearDown(): void
+    {
+        Tenant::forget();
+        parent::tearDown();
+    }
+
     public function test_books_are_scoped_to_tenant(): void
     {
-        Tenant::set(1);
-
         Book::create(['title' => 'Tenant 1 Book', 'author' => 'Author A']);
 
         Tenant::set(2);
-
-        $this->assertCount(0, Book::all()); // Not visible to tenant 2
+        $this->assertCount(0, Book::all()); // invisible to tenant 2
     }
 }
 ```
 
 The base `TestCase`:
-- Uses SQLite in-memory database
-- Disables the module registry cache (`MODULARITY_CACHE=false`)
+- Uses an in-memory SQLite database
+- Disables the registry cache (`MODULARITY_CACHE=false`)
 - Sets the permission driver to `null` (all checks pass)
-- Auto-registers `Module` and `Tenant` facades
-- Runs Modularity's own migrations automatically
+- Registers the `Module` and `Tenant` facades
+- Runs Modularity's infrastructure migrations automatically
 
-**Running tests:**
+**Run the suite:**
 
 ```bash
 ./vendor/bin/pest
@@ -943,11 +923,11 @@ The base `TestCase`:
 
 ## Publishing Assets
 
-| Tag | Contents |
-|---|---|
-| `modularity-config` | `config/modularity.php` |
-| `modularity-migrations` | Four infrastructure migration files |
-| `modularity-stubs` | Module scaffolding stubs (to customize `module:make-module` output) |
+| Tag | Contents | Destination |
+|---|---|---|
+| `modularity-config` | `config/modularity.php` | `config/` |
+| `modularity-migrations` | Four infrastructure migrations | `database/migrations/` |
+| `modularity-stubs` | Scaffolding stubs for `module:make-module` | `stubs/modularity/` |
 
 ```bash
 php artisan vendor:publish --tag=modularity-config
@@ -955,24 +935,30 @@ php artisan vendor:publish --tag=modularity-migrations
 php artisan vendor:publish --tag=modularity-stubs
 ```
 
-Stubs are published to `stubs/modularity/` in the application root.
+Publish the stubs to customize the output of `module:make-module` — the command reads from `stubs/modularity/` when present.
 
 ---
 
 ## Marketplace (Phase 2)
 
-The marketplace system is designed but uses Null Object implementations in Phase 1. Three contracts are defined:
+The marketplace is designed but ships Null Object implementations in Phase 1. Three contracts are defined:
 
 ```php
 Modularity\Marketplace\Contracts\MarketplaceClientInterface
+    fetchAvailable(): array
+    fetchModule(string $slug): ?array
+
 Modularity\Marketplace\Contracts\LicenseVerifierInterface
+    verify(string $slug, int $tenantId): bool
+
 Modularity\Marketplace\Contracts\SubscriptionManagerInterface
+    isSubscribed(string $slug, int $tenantId): bool
+    getSubscription(string $slug, int $tenantId): ?TenantModuleSubscription
 ```
 
-To wire in a real implementation:
+Wire in a real implementation from any service provider:
 
 ```php
-// In a service provider:
 $this->app->bind(
     \Modularity\Marketplace\Contracts\MarketplaceClientInterface::class,
     \App\Marketplace\MyMarketplaceClient::class,
@@ -983,51 +969,44 @@ $this->app->bind(
 
 ## Troubleshooting
 
-**Module routes are not loading**
-
-The module's service provider only boots when the module is active for the current tenant. Verify with:
-
+**Module routes are not loading.**
+The service provider only boots when the module is active for the current tenant. Confirm activation:
 ```bash
 php artisan module:list --tenant=<id>
 ```
+Also make sure a tenant is actually set on the request (`Tenant::id()` is not null).
 
-**Tenant is not being resolved**
+**Tenant is not being resolved.**
+- If you rely on `ResolveTenantMiddleware`, ensure it runs on the route and that `tenancy.resolvers` lists the strategy you expect (default is `session` only).
+- For `subdomain`/`domain`/`header`, set `MODULARITY_TENANT_MODEL` — these resolvers validate the value against that model and return `null` otherwise.
+- Simplest fix in most apps: call `Tenant::set($user->tenant_id)` in your own auth flow.
 
-- Ensure `ResolveTenantMiddleware` is registered and runs on the route
-- Check that your resolver order in `tenancy.resolvers` is correct
-- For subdomain/domain resolvers, ensure `MODULARITY_TENANT_MODEL` is set to your `Tenant` model FQCN
-
-**Cache is stale after install/activate**
-
-Set `MODULARITY_CACHE=false` during development, or manually flush:
-
+**Cache is stale after install/activate.**
+Set `MODULARITY_CACHE=false` during development, or flush manually:
 ```php
 app(\Modularity\Core\Module\ModuleRegistry::class)->invalidateInstalled();
 ```
 
-**`InvalidManifestException` on install**
+**`InvalidManifestException` on install.**
+`module.json` is missing a required field, or the `slug` doesn't match `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`.
 
-The `module.json` is missing a required field or the `slug` does not match the kebab-case format `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`.
-
-**`DependencyNotInstalledException`**
-
-Install the dependency module first:
-
+**`DependencyNotInstalledException`.**
+Install dependencies first:
 ```bash
 php artisan module:install <dependency-slug>
 php artisan module:install <dependent-slug>
 ```
 
-**Permission checks always return `false` with Gate driver**
+**`Module::config()` always returns the default.**
+It returns the default when no tenant is set. Guard with `Tenant::isSet()` in CLI or unauthenticated contexts.
 
-When using the `gate` driver, permissions are registered with Laravel's Gate as simple `true` abilities at install time. Ensure you are not overriding them in `AuthServiceProvider`.
-
-**Migrations don't run for a module**
-
-Migrations must be in `database/migrations/` relative to the module root (where `module.json` lives). The path is derived from `ManifestDTO::$path`.
+**Migrations don't run for a module.**
+Migrations must live in `database/migrations/` relative to the module root (where `module.json` is). The path is derived from `ManifestDTO::$path`.
 
 ---
 
 ## License
 
 MIT — see [LICENSE](LICENSE).
+</content>
+</invoke>

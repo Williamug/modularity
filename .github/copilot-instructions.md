@@ -115,6 +115,16 @@ if (Tenant::isSet()) {
 }
 ```
 
+### 8 — Establishing the current tenant is the host app's job
+
+Prefer setting the tenant explicitly once the request is authenticated — don't assume the resolver chain is configured:
+
+```php
+Tenant::set($user->tenant_id); // your own middleware / auth pipeline
+```
+
+The optional `ResolveTenantMiddleware` defaults to the `session` resolver only. `subdomain`, `domain`, and `header` are **opt-in**, require `MODULARITY_TENANT_MODEL`, and read attacker-controllable input — a resolved tenant ID is **identity, not authorization**. Never suggest trusting it without confirming the authenticated user belongs to that tenant.
+
 ---
 
 ## Facades

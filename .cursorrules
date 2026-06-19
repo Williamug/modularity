@@ -32,6 +32,11 @@ This is the `modularity/core` Laravel package. Read AGENTS.md for the complete g
 7. **Use `Module::config()` only when a tenant is set**: It returns the default silently
    when `Tenant::id()` is null.
 
+8. **Setting the tenant is the host app's job**: prefer `Tenant::set($user->tenant_id)` in
+   your own auth flow. The built-in resolver chain defaults to `session` only; `subdomain`,
+   `domain`, and `header` are opt-in, require `MODULARITY_TENANT_MODEL`, and read
+   attacker-controllable input — a resolved tenant ID is identity, not authorization.
+
 ## Primary facades
 
 ```php

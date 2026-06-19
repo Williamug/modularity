@@ -122,16 +122,26 @@ Key invariants:
 
 ## How Tenant Resolution Works
 
-`ResolveTenantMiddleware` runs on every HTTP request. It tries four strategies in the order declared in `config/modularity.php` → `tenancy.resolvers`:
+**Establishing the current tenant is the host application's responsibility.** The package only consumes `TenantContext`; it does not assume how a request maps to a tenant. The recommended pattern — and what you should suggest by default — is to set it explicitly once the request is authenticated:
 
-1. **subdomain** — extracts the first subdomain segment; looks it up in the configured `Tenant` model
-2. **domain** — looks up the full hostname in the `Tenant` model
-3. **header** — reads `X-Tenant-ID` from the HTTP request headers
-4. **session** — reads `modularity_tenant_id` from the session
+```php
+use Modularity\Support\Facades\Tenant;
 
-The **first resolver that returns a non-null ID** sets `TenantContext`. Subsequent resolvers are not called.
+Tenant::set($user->tenant_id); // in your own middleware or auth pipeline
+```
 
-After the request, the context is reset to prevent bleed in long-running processes (queues, Octane).
+Optionally, the package ships `ResolveTenantMiddleware` (alias `resolve.tenant`). When registered, it runs the resolvers listed in `config/modularity.php` → `tenancy.resolvers`, in order, and the **first non-null result wins**. The context is cleared after the response to prevent bleed in long-running processes (queues, Octane).
+
+Built-in resolvers — **the default chain is `['session']` only**:
+
+| Resolver | Source | Default? |
+|---|---|---|
+| `session` | `modularity_tenant_id` in the session | ✅ enabled by default |
+| `subdomain` | First subdomain segment, looked up in the `Tenant` model | ⚠️ opt-in |
+| `domain` | Full hostname, looked up in the `Tenant` model | ⚠️ opt-in |
+| `header` | `X-Tenant-ID` header, verified against the `Tenant` model | ⚠️ opt-in |
+
+> **⚠️ Security — never gloss over this.** `subdomain`, `domain`, and `header` read attacker-controllable input. A resolved tenant ID is **identity, not authorization** — always confirm the authenticated user belongs to that tenant before trusting it. These three require `MODULARITY_TENANT_MODEL` so the value is validated against a real record (they return `null` otherwise). Custom resolvers may be listed by FQCN (any class implementing `TenantResolverInterface`).
 
 ---
 
@@ -472,7 +482,10 @@ php artisan vendor:publish --tag=modularity-stubs
     ],
 
     'tenancy' => [
-        'resolvers' => ['subdomain', 'domain', 'header', 'session'],
+        // Default is 'session' only. subdomain/domain/header are opt-in and
+        // security-sensitive (see "How Tenant Resolution Works"). Prefer
+        // calling Tenant::set() in your own auth flow over the resolver chain.
+        'resolvers' => ['session'],
         'column'    => 'tenant_id',
         'model'     => env('MODULARITY_TENANT_MODEL', null), // FQCN of host Tenant model
     ],
