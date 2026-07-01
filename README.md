@@ -84,7 +84,7 @@ Modularity has three audiences. Knowing which layer you're in keeps the API smal
 
 The whole system rests on two ideas:
 
-1. **A module is active *per tenant*.** Installing a module runs its migrations and registers its permissions globally — but its routes, views, navigation, and listeners only load for tenants that have *activated* it.
+1. **A module is installed once, then switched on *per tenant*.** Installing runs its migrations and registers its permissions. Once installed, a module's routes, views, and navigation are registered on **every** request (the tenant isn't known yet at boot) — and access is gated *per tenant at request time*: the `module.active` middleware blocks tenants that haven't activated it, and `Module::menu()->forTenant()` only shows modules a tenant has switched on.
 2. **You decide who the tenant is.** Modularity gives you a request-scoped `TenantContext` and automatic query scoping. It does **not** assume how your app authenticates tenants — see [Multi-Tenancy](#multi-tenancy).
 
 ---
@@ -132,6 +132,20 @@ The package ships a `ResolveTenantMiddleware` (alias `resolve.tenant`) that runs
 ```
 
 The alias `resolve.tenant` is registered automatically, so you can also attach it per-route: `->middleware('resolve.tenant')`.
+
+### Gating module access per tenant
+
+Because a module's routes are registered for **every** installed module, you gate who may reach them with the package's `module.active` middleware (alias registered automatically). It returns **404** unless the module is active for the current tenant:
+
+```php
+// In a module's routes/web.php — the scaffolded stub already does this
+Route::middleware(['web', 'auth', 'module.active:library'])
+    ->prefix('library')->name('library.')->group(function () {
+        // ...
+    });
+```
+
+The current tenant must already be set on the request (via your own middleware calling `Tenant::set()`, or `resolve.tenant`). See [Multi-Tenancy](#multi-tenancy) and the host-integration walkthrough in [`INTEGRATION.md`](INTEGRATION.md).
 
 ---
 
@@ -198,6 +212,9 @@ return [
         'column'    => 'tenant_id',
         // FQCN of your app's Tenant model (required by subdomain/domain/header resolvers)
         'model'     => env('MODULARITY_TENANT_MODEL', null),
+        // Fail closed: throw when a BelongsToTenant model is queried with no tenant set
+        // (the console is exempt). Off by default; see Multi-Tenancy.
+        'strict'    => env('MODULARITY_TENANCY_STRICT', false),
     ],
 
     'migrations' => [
@@ -366,6 +383,14 @@ class Book extends Model
 
 Module models can extend `ModuleModel`, which already includes the trait.
 
+> **⚠️ Fail-open by default.** When **no** tenant is set, `BelongsToTenant` queries are *unscoped* — they return every tenant's rows rather than none. Forgetting `Tenant::set()` therefore silently disables isolation. For production, enable **strict mode** to fail closed instead:
+>
+> ```dotenv
+> MODULARITY_TENANCY_STRICT=true
+> ```
+>
+> A `BelongsToTenant` query with no tenant set then throws `TenantNotResolvedException`. The console is exempt, so migrations, seeders, and maintenance commands still run unscoped.
+
 #### Reading tenant context
 
 ```php
@@ -494,7 +519,7 @@ Modules/Library/
 
 ### Service Provider
 
-Every module provides a service provider that extends `ModuleServiceProvider`. The base class handles the heavy lifting — routes, views, listeners, Livewire components, and navigation are wired up automatically **only when the module is active for the current tenant**.
+Every module provides a service provider that extends `ModuleServiceProvider`. The base class handles the heavy lifting — routes, views, listeners, Livewire components, and navigation are wired up automatically for **every installed module**, on every request. (Per-tenant access is enforced separately, at request time, by the `module.active` middleware — not in the provider.)
 
 ```php
 namespace Modules\Library\Providers;
@@ -536,7 +561,7 @@ class LibraryServiceProvider extends ModuleServiceProvider
 }
 ```
 
-> **Important:** `boot()` is a no-op when the module is inactive for the current tenant — that's the gate that makes modules switchable. Put anything that must run unconditionally (container bindings, etc.) in `register()` instead.
+> **Important:** the base `boot()` registers routes/views/navigation unconditionally (the tenant isn't known yet at boot). What makes a module *switchable* is the `module.active:<slug>` middleware on its routes plus per-tenant menu filtering — not the provider. Put container bindings in `register()` as usual.
 
 ### Tenant-scoped models
 
@@ -567,11 +592,11 @@ class Book extends Model
 
 ### Routes
 
-Route files are auto-loaded when the module is active — no manual registration, and **no need to re-check `Module::active()` inside them**:
+Route files are auto-loaded for every installed module — no manual registration. Gate them per tenant with the `module.active:<slug>` middleware (the scaffolded stub already does this); no need to re-check `Module::active()` inside them:
 
 ```php
 // routes/web.php — wrapped in the 'web' middleware group
-Route::middleware(['auth'])->group(function () {
+Route::middleware(['auth', 'module.active:library'])->group(function () {
     Route::get('/library', [LibraryController::class, 'index'])->name('library.index');
     Route::get('/library/{book}', [LibraryController::class, 'show'])->name('library.show');
 });
@@ -751,7 +776,8 @@ $registry->isInstalled(string $slug): bool
 $registry->isDiscovered(string $slug): bool
 $registry->activeFor(string $slug, int $tenantId): bool
 $registry->invalidateInstalled(): void
-$registry->invalidateActive(int $tenantId): void
+$registry->invalidateTenant(int $tenantId): void
+$registry->invalidateAllTenants(): void
 ```
 
 **NavigationRegistry:**
@@ -919,6 +945,42 @@ The base `TestCase`:
 ./vendor/bin/pest --filter "LibraryTest"
 ```
 
+### Testing modules
+
+`module:make-module` generates a starter test at `Modules/<Name>/tests/<Name>Test.php` that already demonstrates the patterns below, so you usually don't write this from scratch. Add a testsuite for module tests once, in `phpunit.xml`:
+
+```xml
+<testsuite name="Modules">
+    <directory>Modules/*/tests</directory>
+</testsuite>
+```
+
+Use the shipped **`InteractsWithModules`** trait so you never touch the loader or registry directly:
+
+```php
+use Modularity\Testing\InteractsWithModules;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+
+uses(Tests\TestCase::class, RefreshDatabase::class, InteractsWithModules::class);
+
+beforeEach(function () {
+    // Installs (runs migrations + registers permissions), re-boots the loader so the
+    // module's routes/views/nav register, and activates it for tenant 1 — one call.
+    $this->installAndActivateModule('library', tenantId: 1);
+});
+
+it('scopes records to the current tenant', function () {
+    $this->asTenant(1, fn () => Book::create(['title' => 'A']));
+    $this->asTenant(2, fn () => expect(Book::count())->toBe(0)); // isolated
+});
+```
+
+Trait API: `installModule()`, `activateModule()`, `installAndActivateModule()`, `bootModules()`, `asTenant()`.
+
+**Why the re-boot?** The loader boots installed modules **once, at app boot**. With `RefreshDatabase` the database starts empty, so a module installed *mid-test* wouldn't have its provider registered for the request under test — `installModule()`/`bootModules()` re-run the loader to fix that. In production this never bites: `module:install` is a separate, persisted step, so every later request boots the module normally. (Alternatively, register the module's provider in `bootstrap/providers.php` so its routes always exist; `module.active` still gates per tenant.)
+
+The package's own `tests/Http/` suite uses this trait with an on-disk fixture module as a reference.
+
 ---
 
 ## Publishing Assets
@@ -969,12 +1031,12 @@ $this->app->bind(
 
 ## Troubleshooting
 
-**Module routes are not loading.**
-The service provider only boots when the module is active for the current tenant. Confirm activation:
-```bash
-php artisan module:list --tenant=<id>
-```
-Also make sure a tenant is actually set on the request (`Tenant::id()` is not null).
+**Module routes are not loading / every module URL 404s.**
+Module routes register on every HTTP request once the module is **installed** — but **not on the CLI** (deliberate, to avoid booting every module on every artisan command), so `route:list` won't show them. Check:
+- The module is installed: `php artisan module:list`.
+- You're hitting it over HTTP, not asserting via `route:list`.
+- If a specific tenant gets a 404, that's the `module.active` middleware — confirm activation (`php artisan module:list --tenant=<id>`) and that a tenant is set on the request (`Tenant::id()` is not null).
+- **In tests**, modules installed *mid-test* won't have booted (the loader runs at app-boot, before the install). Use the `InteractsWithModules` trait's `installModule()` / `bootModules()`, or register the providers explicitly — see [Testing](#testing).
 
 **Tenant is not being resolved.**
 - If you rely on `ResolveTenantMiddleware`, ensure it runs on the route and that `tenancy.resolvers` lists the strategy you expect (default is `session` only).

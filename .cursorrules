@@ -20,8 +20,10 @@ This is the `modularity/core` Laravel package. Read AGENTS.md for the complete g
 3. **Slug format is strictly kebab-case**: `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`
    Valid: `my-module` Invalid: `MyModule`, `my_module`, `My Module`
 
-4. **Boot is gated**: `ModuleServiceProvider::boot()` returns early if the module is not
-   active for the current tenant. Routes, views, listeners — nothing loads unless active.
+4. **Boot is NOT gated by tenant**: `ModuleServiceProvider::boot()` registers routes, views,
+   navigation, and listeners for every *installed* module on every request (the tenant isn't
+   known yet at boot). Gate access per tenant with the `module.active:<slug>` middleware on the
+   module's routes (it 404s inactive tenants); the menu is filtered by `forTenant()` at render.
 
 5. **Install before activate**: A module must be installed globally before it can be
    activated for a tenant. Dependencies must be installed before dependents.

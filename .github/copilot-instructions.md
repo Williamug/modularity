@@ -77,23 +77,19 @@ Valid: `invoicing`, `billing-reports`, `crm2`
 Invalid: `Invoicing`, `billing_reports`, `My Module`
 Regex: `/^[a-z0-9]+(?:-[a-z0-9]+)*$/`
 
-### 5 — Module boot is conditional — do not add unconditional logic there
+### 5 — Module boot runs for every installed module; gate access with `module.active`
 
-`ModuleServiceProvider::boot()` calls `moduleIsActive()` first and returns early if the module is not active for the current tenant. Routes, views, listeners, and navigation are never loaded for inactive modules.
+`ModuleServiceProvider::boot()` registers routes, views, listeners, and navigation for **every installed module on every request** — it does NOT gate on the current tenant (the tenant isn't known yet at boot). Restrict who may reach a module's routes with the `module.active:<slug>` middleware (it 404s tenants that haven't activated the module); the menu is filtered per tenant by `Module::menu()->forTenant()`.
 
 ```php
-// WRONG — register() runs unconditionally; boot() does not
 public function register(): void
 {
-    // Bind module-specific services here (always runs)
+    // Container bindings go here (runs unconditionally) — NOT in boot().
 }
 
-public function boot(): void
-{
-    // Everything here runs ONLY when module is active for current tenant
-    // parent::boot() handles routes, views, listeners, and navigation for you
-    parent::boot();
-}
+// No boot() override needed: the base ModuleServiceProvider::boot() already
+// registers routes/views/listeners/navigation. Access is gated at request time
+// by the `module.active:<slug>` middleware on the module's routes.
 ```
 
 ### 6 — Install order matters; migrations are never rolled back

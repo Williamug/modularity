@@ -143,6 +143,8 @@ Built-in resolvers — **the default chain is `['session']` only**:
 
 > **⚠️ Security — never gloss over this.** `subdomain`, `domain`, and `header` read attacker-controllable input. A resolved tenant ID is **identity, not authorization** — always confirm the authenticated user belongs to that tenant before trusting it. These three require `MODULARITY_TENANT_MODEL` so the value is validated against a real record (they return `null` otherwise). Custom resolvers may be listed by FQCN (any class implementing `TenantResolverInterface`).
 
+**Gating which modules a tenant may reach is separate from resolving the tenant.** A module's routes are registered for every *installed* module; the `module.active:<slug>` middleware then 404s any tenant that hasn't activated it. For production, also consider `MODULARITY_TENANCY_STRICT=true`, which makes a `BelongsToTenant` query throw when no tenant is set (fail closed) instead of returning every tenant's rows. The console is exempt.
+
 ---
 
 ## Critical Rules for Code Generation
@@ -163,33 +165,35 @@ class LibraryServiceProvider extends ModuleServiceProvider
 }
 ```
 
-### 2. Boot logic is gated by `moduleIsActive()`
+### 2. `boot()` runs for every installed module, NOT only when active
 
-`ModuleServiceProvider::boot()` calls `$this->moduleIsActive()` first. If the module is not active for the current tenant, **the entire boot method returns early**. Do not put logic in `boot()` that must run unconditionally — put it in `register()` instead.
+`ModuleServiceProvider::boot()` registers the module's routes, views, Livewire components, navigation, and listeners on **every** request, for every *installed* module — independent of the current tenant. The tenant isn't known yet at boot time (session/auth tenancy resolves later, in middleware), so gating boot on activeness would leave routes unregistered and every module URL would 404.
+
+Per-tenant access is enforced **at request time** by the `module.active` middleware (see rule 3), and the menu is filtered by `Module::menu()->forTenant()` when it renders. Do **not** assume `boot()` is a no-op for inactive tenants. Container bindings still belong in `register()` as usual.
 
 ```php
-// WRONG: this navigation item only gets added when the module is active,
-// which is correct behavior — but authors sometimes get confused about WHY
-// items don't appear.
+// CORRECT — navigation is registered for the installed module; forTenant()
+// filters it per tenant at render time, so it only appears for tenants that
+// have the module active and users who hold the permission.
 protected function registerModuleNavigation(): void
 {
-    Module::menu()->add([...]); // only runs when active — expected!
+    Module::menu()->add([...]);
 }
 ```
 
-### 3. Never use `Module::active()` inside a module's own routes
+### 3. Gate a module's routes with the `module.active` middleware
 
-Route files are only loaded when the module is active. You do not need an additional active check inside them:
+Route files are loaded for every installed module, so a module's routes must gate themselves per tenant with the package's `module.active:<slug>` middleware (it 404s when the module isn't active for the current tenant). The scaffolded stub already does this. Do not hand-roll an `abort_unless(Module::active(...))` closure.
 
 ```php
-// WRONG — redundant
+// WRONG — hand-rolled gate
 Route::middleware(['web', function($req, $next) {
     abort_unless(Module::active('library'), 403);
     return $next($req);
 }])->group(function () { ... });
 
-// CORRECT — routes are not loaded if the module is not active
-Route::middleware(['web', 'auth'])->group(function () { ... });
+// CORRECT — use the shipped middleware (alias registered automatically)
+Route::middleware(['web', 'auth', 'module.active:library'])->group(function () { ... });
 ```
 
 ### 4. Always include `tenant_id` in module migration tables
@@ -555,27 +559,31 @@ TenantModule::forTenant(Tenant::id())
     ->update(['settings->max_books_per_user' => 50]);
 ```
 
-### Testing with tenant context
+### Testing modules (host apps)
+
+Use the shipped `Modularity\Testing\InteractsWithModules` trait. It installs/activates a
+module and **re-boots the loader** — required because the loader boots once at app-boot,
+before a test installs anything, so a module installed mid-test would otherwise have no
+routes registered. Do NOT call `app('modularity.loader')->boot()` by hand in generated
+tests; use the trait. `module:make-module` already generates a starter test using it.
 
 ```php
-use Modularity\Tests\TestCase;
-use Modularity\Support\Facades\Tenant;
+use Modularity\Testing\InteractsWithModules;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 
-class BookTest extends TestCase
-{
-    protected function setUp(): void
-    {
-        parent::setUp();
-        Tenant::set(1);
-    }
+uses(Tests\TestCase::class, RefreshDatabase::class, InteractsWithModules::class);
 
-    protected function tearDown(): void
-    {
-        Tenant::forget();
-        parent::tearDown();
-    }
-}
+beforeEach(fn () => $this->installAndActivateModule('library', tenantId: 1));
+
+it('isolates data per tenant', function () {
+    $this->asTenant(1, fn () => Book::create(['title' => 'A']));
+    $this->asTenant(2, fn () => expect(Book::count())->toBe(0));
+});
 ```
+
+Trait API: `installModule()`, `activateModule()`, `installAndActivateModule()`,
+`bootModules()`, `asTenant()`. (Inside the package's *own* test suite, extend
+`Modularity\Tests\TestCase` and set `Tenant::set(1)` in `setUp()` instead.)
 
 ### Programmatic module management (admin UI)
 
@@ -612,14 +620,16 @@ class AdminModuleController extends Controller
 |---|---|---|
 | Extending `ModuleServiceProvider` without setting `$slug` | Runtime error on boot | Always declare `protected string $slug = 'my-slug'` |
 | Module table without `tenant_id` column | Data leaks between tenants | Add `$table->unsignedBigInteger('tenant_id')->index()` |
-| Using `Module::active()` inside module routes | Redundant — routes don't load if inactive | Remove the check; trust the lifecycle |
+| Hand-rolling an active check inside module routes | Redundant — gating is the middleware's job | Use `module.active:<slug>` middleware on the route group |
+| Omitting `module.active` from a module's routes | Any tenant can reach the module | Add `module.active:<slug>` to the route group |
 | Accessing `Tenant::id()` in CLI commands without setting it | Returns null silently | Pass `--tenant` option or call `Tenant::set()` first |
 | Calling `Module::config()` on unauthenticated routes | Returns default silently | Guard with `Tenant::isSet()` check first |
 | CamelCase or snake_case slugs | `InvalidManifestException` | Use kebab-case only: `my-module` |
 | Installing a module without its dependencies | `DependencyNotInstalledException` | Install in dependency order |
 | Manually creating `InstalledModule` records | Bypasses lifecycle (no migrations, no events) | Always use `ModuleInstaller::install()` |
 | Rolling back module migrations manually | May break other modules that depend on tables | Never roll back; remove data via seeders or custom commands |
-| Putting unconditional boot logic in `ModuleServiceProvider::boot()` | Runs only when active — may never run | Move to `register()` or use application-level event listeners |
+| Assuming `ModuleServiceProvider::boot()` is a no-op for inactive tenants | False — boot runs for every installed module | Gate access with `module.active`; don't rely on boot-time gating |
+| Container bindings in `boot()` instead of `register()` | Bindings should be registered, not booted | Put bindings in `register()` |
 
 ---
 
