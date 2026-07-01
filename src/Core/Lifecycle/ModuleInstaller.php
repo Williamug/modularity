@@ -3,7 +3,10 @@
 namespace Modularity\Core\Lifecycle;
 
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Modularity\Core\Module\Exceptions\DependencyNotInstalledException;
+use Modularity\Core\Module\Exceptions\IncompatibleModuleException;
 use Modularity\Core\Module\Exceptions\ModuleNotFoundException;
 use Modularity\Core\Module\ManifestDTO;
 use Modularity\Core\Module\MigrationRunner;
@@ -34,23 +37,28 @@ class ModuleInstaller
         }
 
         $this->validateDependencies($manifest);
+        $this->validateCompatibility($manifest);
 
         $migrationsPath = $manifest->path.'/database/migrations';
+
+        // Run migrations outside the transaction — DDL is non-transactional on
+        // most databases. A failure here throws and aborts before any record
+        // is written, leaving a clean slate for a retry.
         $this->migrationRunner->runForModule($slug, $migrationsPath);
 
-        $this->permissionRegistry->registerForModule($slug, $manifest->permissions);
+        $checksum = hash_file('sha256', $manifest->path.'/module.json') ?: null;
 
-        $checksum = md5_file($manifest->path.'/module.json') ?: null;
+        $record = DB::transaction(function () use ($slug, $manifest, $checksum): InstalledModule {
+            $this->permissionRegistry->registerForModule($slug, $manifest->permissions);
 
-        $record = InstalledModule::create([
-            'slug'         => $slug,
-            'name'         => $manifest->name,
-            'version'      => $manifest->version,
-            'checksum'     => $checksum,
-            'status'       => 'installed',
-        ]);
-
-        $this->registry->invalidateInstalled();
+            return InstalledModule::create([
+                'slug'     => $slug,
+                'name'     => $manifest->name,
+                'version'  => $manifest->version,
+                'checksum' => $checksum,
+                'status'   => 'installed',
+            ]);
+        });
 
         $this->events->dispatch(new ModuleInstalled($manifest));
 
@@ -79,5 +87,29 @@ class ModuleInstaller
                 throw DependencyNotInstalledException::missing($manifest->slug, $depSlug);
             }
         }
+    }
+
+    private function validateCompatibility(ManifestDTO $manifest): void
+    {
+        $constraint = $manifest->compatibility;
+
+        if ($constraint === '*' || $constraint === '') {
+            return;
+        }
+
+        $platformVersion = config('modularity.version', '1.0.0');
+
+        if (class_exists(\Composer\Semver\Semver::class)) {
+            if (! \Composer\Semver\Semver::satisfies($platformVersion, $constraint)) {
+                throw IncompatibleModuleException::version($manifest->slug, $constraint, $platformVersion);
+            }
+
+            return;
+        }
+
+        Log::warning(
+            "[Modularity] Module [{$manifest->slug}] declares compatibility [{$constraint}] "
+            .'but composer/semver is not available to verify it. Install composer/semver to enable enforcement.'
+        );
     }
 }

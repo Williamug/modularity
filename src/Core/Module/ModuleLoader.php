@@ -6,14 +6,17 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Modularity\Core\Module\Exceptions\CircularDependencyException;
 use Modularity\Core\Module\Exceptions\InvalidManifestException;
-use Modularity\Core\Tenancy\TenantContext;
+use Modularity\Core\Permissions\PermissionRegistry;
 
 class ModuleLoader
 {
+    /** @var array<int, array<string, mixed>>|null Parsed modularity packages from installed.json */
+    private ?array $composerModulePackages = null;
+
     public function __construct(
         private readonly Application $app,
         private readonly ModuleRegistry $registry,
-        private readonly TenantContext $tenantContext,
+        private readonly PermissionRegistry $permissions,
     ) {}
 
     public function discover(): void
@@ -30,31 +33,40 @@ class ModuleLoader
             return;
         }
 
-        $installedManifests = array_filter(
+        // Always filter to installed modules only. getInstalled() has a try/catch
+        // that gracefully returns [] when the database is unavailable (e.g. before
+        // migrations have run), so this is safe in all contexts including CLI.
+        $candidates = array_values(array_filter(
             $discovered,
             fn (ManifestDTO $m) => $this->registry->isInstalled($m->slug)
-        );
+        ));
 
-        if (empty($installedManifests)) {
+        if (empty($candidates)) {
+            return;
+        }
+
+        // Never auto-boot module providers on a real artisan invocation. Booting every
+        // installed module for every command (artisan list, key:generate, migrate, …) was
+        // the original freeze/memory cause, and module routes/views aren't needed there.
+        // We still boot during the test environment so the HTTP path is exercisable.
+        if ($this->app->runningInConsole() && ! $this->app->runningUnitTests()) {
             return;
         }
 
         try {
-            $sorted = (new DependencyGraph(array_values($installedManifests)))->resolve();
+            $sorted = (new DependencyGraph($candidates))->resolve();
         } catch (CircularDependencyException $e) {
             Log::error('[Modularity] '.$e->getMessage());
 
             return;
         }
 
-        $tenantId = $this->tenantContext->id();
-
         foreach ($sorted as $manifest) {
-            $this->bootModule($manifest, $tenantId);
+            $this->bootModule($manifest);
         }
     }
 
-    private function bootModule(ManifestDTO $manifest, ?int $tenantId): void
+    private function bootModule(ManifestDTO $manifest): void
     {
         $installedRecord = $this->registry->getInstalledRecord($manifest->slug);
 
@@ -62,18 +74,15 @@ class ModuleLoader
             return;
         }
 
-        $isActive = $tenantId !== null
-            ? $this->registry->activeFor($manifest->slug, $tenantId)
-            : false;
-
-        // In CLI context with no tenant, we still register the provider so
-        // commands and migrations are available, but the tenant gate inside
-        // ModuleServiceProvider::boot() will skip UI/route registration.
-        $shouldBoot = $isActive || $this->app->runningInConsole();
-
-        if (! $shouldBoot) {
-            return;
-        }
+        // Register the module's providers for EVERY installed module, independent of the
+        // current tenant. Routes, views and navigation are global registrations — the
+        // tenant isn't known yet at boot (session/auth tenancy resolves in middleware).
+        // Per-tenant access is enforced at request time by the `module.active` middleware,
+        // and NavigationRegistry::forTenant() filters menu items per tenant when rendered.
+        //
+        // Permissions are registered here too so their Gate abilities exist on every
+        // request (a host grants them via Gate::before / its own permission system).
+        $this->permissions->registerForModule($manifest->slug, $manifest->permissions);
 
         foreach ($manifest->providers as $providerClass) {
             if (! class_exists($providerClass)) {
@@ -121,22 +130,25 @@ class ModuleLoader
             return;
         }
 
-        $installed = json_decode(file_get_contents($installedPath), true);
-        $packages  = $installed['packages'] ?? $installed;
+        if ($this->composerModulePackages === null) {
+            $installed = json_decode(file_get_contents($installedPath), true);
+            $all       = $installed['packages'] ?? $installed;
 
-        if (! is_array($packages)) {
-            return;
+            $this->composerModulePackages = is_array($all)
+                ? array_values(array_filter($all, fn ($p) => ($p['extra']['modularity']['module'] ?? false) === true))
+                : [];
         }
 
-        foreach ($packages as $package) {
-            $isModule = ($package['extra']['modularity']['module'] ?? false) === true;
+        foreach ($this->composerModulePackages as $package) {
+            $name = $package['name'] ?? '';
 
-            if (! $isModule) {
+            // Reject empty names and anything that doesn't look like a valid
+            // Composer package name (vendor/package). This prevents path traversal
+            // via a crafted installed.json entry containing ".." sequences.
+            if ($name === '' || ! preg_match('/^[a-z0-9_.-]+\/[a-z0-9_.-]+$/i', $name)) {
                 continue;
             }
 
-            // Find the package installation path
-            $name      = $package['name'] ?? '';
             $vendorDir = base_path('vendor/'.$name);
 
             if (is_dir($vendorDir) && file_exists($vendorDir.'/module.json')) {

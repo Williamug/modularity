@@ -57,6 +57,39 @@ it('scope skips where when context not set', function () {
     expect($queries[0]['query'])->not->toContain('tenant_id');
 });
 
+it('strict mode throws when querying with no tenant set', function () {
+    config(['modularity.tenancy.strict' => true]);
+
+    $context = app(TenantContext::class);
+    $context->forget();
+
+    $model = new class extends ModuleModel {
+        protected $table = 'test_items';
+        protected $fillable = ['tenant_id', 'name'];
+        public $timestamps = false;
+    };
+
+    expect(fn () => $model->newQuery()->get())
+        ->toThrow(\Modularity\Core\Tenancy\Exceptions\TenantNotResolvedException::class);
+});
+
+it('strict mode still scopes normally when a tenant is set', function () {
+    config(['modularity.tenancy.strict' => true]);
+
+    $context = app(TenantContext::class);
+    $context->set(3);
+
+    $model = new class extends ModuleModel {
+        protected $table = 'test_items';
+        protected $fillable = ['tenant_id', 'name'];
+        public $timestamps = false;
+    };
+
+    expect(fn () => $model->newQuery()->get())->not->toThrow(\Throwable::class);
+
+    $context->forget();
+});
+
 it('creating event sets tenant id', function () {
     $context = app(TenantContext::class);
     $context->set(42);

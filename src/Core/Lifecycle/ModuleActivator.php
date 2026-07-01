@@ -7,6 +7,7 @@ use Modularity\Core\Module\Exceptions\ModuleNotInstalledException;
 use Modularity\Core\Module\ModuleRegistry;
 use Modularity\Events\ModuleActivated;
 use Modularity\Marketplace\Contracts\SubscriptionManagerInterface;
+use Modularity\Marketplace\Exceptions\SubscriptionRequiredException;
 use Modularity\Models\TenantModule;
 
 class ModuleActivator
@@ -23,16 +24,17 @@ class ModuleActivator
             throw ModuleNotInstalledException::slug($slug);
         }
 
-        // Phase 1: NullSubscriptionManager always returns true
-        $this->subscriptions->check($tenantId, $slug);
+        if (! $this->subscriptions->check($tenantId, $slug)) {
+            throw SubscriptionRequiredException::forModule($slug, $tenantId);
+        }
 
         $record = TenantModule::updateOrCreate(
             ['tenant_id' => $tenantId, 'module_slug' => $slug],
             ['active' => true, 'activated_at' => now(), 'deactivated_at' => null]
         );
 
-        $this->registry->invalidateTenant($tenantId);
-
+        // CacheInvalidationListener invalidates this tenant's cache in
+        // response to the ModuleActivated event.
         $this->events->dispatch(new ModuleActivated($slug, $tenantId));
 
         return $record;

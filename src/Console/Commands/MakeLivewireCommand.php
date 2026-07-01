@@ -81,6 +81,12 @@ class MakeLivewireCommand extends Command
 
     private function writeFromStub(string $stub, string $target, array $replacements): void
     {
+        if (! $this->files->exists($stub)) {
+            $this->warn("Stub [{$stub}] not found; skipping [{$target}].");
+
+            return;
+        }
+
         $content = $this->files->get($stub);
         $content = str_replace(array_keys($replacements), array_values($replacements), $content);
 

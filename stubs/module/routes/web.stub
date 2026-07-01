@@ -3,7 +3,11 @@
 use Illuminate\Support\Facades\Route;
 use Modules\{{PascalName}}\Http\Controllers\{{PascalName}}Controller;
 
-Route::middleware(['web', 'auth', 'resolve.tenant'])
+// `module.active:{{kebab-slug}}` gates these routes to tenants that have the module
+// active (it 404s otherwise). The current tenant must already be set on the request —
+// either by your own auth middleware (Tenant::set($user->tenant_id)) or by adding
+// 'resolve.tenant' here once you've enabled a tenant resolver in config/modularity.php.
+Route::middleware(['web', 'auth', 'module.active:{{kebab-slug}}'])
     ->prefix('{{kebab-slug}}')
     ->name('{{kebab-slug}}.')
     ->group(function () {

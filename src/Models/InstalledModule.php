@@ -10,13 +10,14 @@ class InstalledModule extends Model
 
     protected $table = 'modularity_installed_modules';
 
+    // 'installed_at' is intentionally NOT fillable — it is set by the database
+    // default (useCurrent) so install timestamps cannot be spoofed via mass assignment.
     protected $fillable = [
         'slug',
         'name',
         'version',
         'checksum',
         'status',
-        'installed_at',
     ];
 
     protected $casts = [

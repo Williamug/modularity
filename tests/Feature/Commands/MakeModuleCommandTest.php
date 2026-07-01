@@ -13,7 +13,7 @@ afterEach(function () {
 });
 
 it('scaffolds module directory tree', function () {
-    $this->artisan('modularity:make-module', ['name' => 'Inventory'])
+    $this->artisan('module:make-module', ['name' => 'Inventory'])
         ->assertExitCode(0);
 
     $modulePath = $this->tmpModulesPath.'/Inventory';
@@ -25,10 +25,28 @@ it('scaffolds module directory tree', function () {
     expect($modulePath.'/src/Providers/InventoryServiceProvider.php')->toBeFile();
     expect($modulePath.'/src/Models/Inventory.php')->toBeFile();
     expect($modulePath.'/resources/views/index.blade.php')->toBeFile();
+    expect($modulePath.'/tests/InventoryTest.php')->toBeFile();
+});
+
+it('generates a syntactically valid, token-free starter test', function () {
+    $this->artisan('module:make-module', ['name' => 'Library'])
+        ->assertExitCode(0);
+
+    $testPath = $this->tmpModulesPath.'/Library/tests/LibraryTest.php';
+    $contents = file_get_contents($testPath);
+
+    expect($contents)->toContain("installAndActivateModule('library'")
+        ->and($contents)->toContain('InteractsWithModules')
+        ->and($contents)->not->toContain('{{PascalName}}')
+        ->and($contents)->not->toContain('{{kebab-slug}}');
+
+    // The comment block must not contain a premature `*/` that breaks parsing.
+    expect(shell_exec('php -l '.escapeshellarg($testPath).' 2>&1'))
+        ->toContain('No syntax errors detected');
 });
 
 it('module json has correct slug', function () {
-    $this->artisan('modularity:make-module', ['name' => 'PointOfSale'])
+    $this->artisan('module:make-module', ['name' => 'PointOfSale'])
         ->assertExitCode(0);
 
     $manifest = json_decode(
@@ -41,7 +59,7 @@ it('module json has correct slug', function () {
 });
 
 it('tokens are replaced in service provider', function () {
-    $this->artisan('modularity:make-module', ['name' => 'Library'])
+    $this->artisan('module:make-module', ['name' => 'Library'])
         ->assertExitCode(0);
 
     $provider = file_get_contents(
@@ -56,6 +74,6 @@ it('tokens are replaced in service provider', function () {
 it('fails if module already exists', function () {
     mkdir($this->tmpModulesPath.'/Payroll', 0755, true);
 
-    $this->artisan('modularity:make-module', ['name' => 'Payroll'])
+    $this->artisan('module:make-module', ['name' => 'Payroll'])
         ->assertExitCode(1);
 });

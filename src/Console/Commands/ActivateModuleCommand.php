@@ -8,36 +8,36 @@ use Modularity\Core\Module\Exceptions\ModuleNotInstalledException;
 
 class ActivateModuleCommand extends Command
 {
-    protected $signature = 'modularity:activate
+  protected $signature = 'module:activate
                             {slug : The module slug}
                             {--tenant= : The tenant ID to activate the module for (required)}';
 
-    protected $description = 'Activate a module for a specific tenant';
+  protected $description = 'Activate a module for a specific tenant';
 
-    public function handle(ModuleActivator $activator): int
-    {
-        $slug     = $this->argument('slug');
-        $tenantId = $this->option('tenant');
+  public function handle(ModuleActivator $activator): int
+  {
+    $slug     = $this->argument('slug');
+    $tenantId = $this->option('tenant');
 
-        if (! $tenantId) {
-            $this->error('--tenant= is required. Example: php artisan modularity:activate library --tenant=1');
+    if (! $tenantId) {
+      $this->error('--tenant= is required. Example: php artisan modularity:activate library --tenant=1');
 
-            return self::FAILURE;
-        }
-
-        try {
-            $activator->activate($slug, (int) $tenantId);
-            $this->info("Module [{$slug}] activated for tenant [{$tenantId}].");
-        } catch (ModuleNotInstalledException $e) {
-            $this->error($e->getMessage());
-
-            return self::FAILURE;
-        } catch (\Exception $e) {
-            $this->error('Activation failed: '.$e->getMessage());
-
-            return self::FAILURE;
-        }
-
-        return self::SUCCESS;
+      return self::FAILURE;
     }
+
+    try {
+      $activator->activate($slug, (int) $tenantId);
+      $this->info("Module [{$slug}] activated for tenant [{$tenantId}].");
+    } catch (ModuleNotInstalledException $e) {
+      $this->error($e->getMessage());
+
+      return self::FAILURE;
+    } catch (\Exception $e) {
+      $this->error('Activation failed: ' . $e->getMessage());
+
+      return self::FAILURE;
+    }
+
+    return self::SUCCESS;
+  }
 }

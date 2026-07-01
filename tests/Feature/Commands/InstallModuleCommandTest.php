@@ -11,7 +11,7 @@ afterEach(function () {
 });
 
 it('install command succeeds', function () {
-    $this->artisan('modularity:install', [
+    $this->artisan('module:install', [
         'slug'   => 'test-accounting',
         '--path' => $this->fixture->path(),
     ])
@@ -20,7 +20,7 @@ it('install command succeeds', function () {
 });
 
 it('install and activate with tenant', function () {
-    $this->artisan('modularity:install', [
+    $this->artisan('module:install', [
         'slug'     => 'test-accounting',
         '--path'   => $this->fixture->path(),
         '--tenant' => 5,
@@ -34,6 +34,6 @@ it('install and activate with tenant', function () {
 });
 
 it('install fails gracefully for missing module', function () {
-    $this->artisan('modularity:install', ['slug' => 'does-not-exist'])
+    $this->artisan('module:install', ['slug' => 'does-not-exist'])
         ->assertExitCode(1);
 });

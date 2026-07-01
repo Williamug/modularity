@@ -8,52 +8,57 @@ use Modularity\Models\TenantModule;
 
 class ListModulesCommand extends Command
 {
-    protected $signature = 'modularity:list {--tenant= : Filter to show activation status for a specific tenant}';
+  protected $signature = 'module:list {--tenant= : Filter to show activation status for a specific tenant}';
 
-    protected $description = 'List all discovered, installed, and active modules';
+  protected $description = 'List all discovered, installed, and active modules';
 
-    public function handle(ModuleRegistry $registry): int
-    {
-        $tenantId = $this->option('tenant') ? (int) $this->option('tenant') : null;
-        $rows     = [];
+  public function handle(ModuleRegistry $registry): int
+  {
+    $tenantId = $this->option('tenant') ? (int) $this->option('tenant') : null;
+    $rows     = [];
 
-        foreach ($registry->allDiscovered() as $slug => $manifest) {
-            $isInstalled = $registry->isInstalled($slug);
-            $isActive    = $tenantId !== null && $isInstalled
-                ? $registry->activeFor($slug, $tenantId)
-                : null;
+    // Batch-load all active tenant counts in a single grouped query
+    $activeCounts = TenantModule::active()
+      ->selectRaw('module_slug, COUNT(*) as count')
+      ->groupBy('module_slug')
+      ->pluck('count', 'module_slug')
+      ->all();
 
-            $activeTenantCount = $isInstalled
-                ? TenantModule::forModule($slug)->active()->count()
-                : 0;
+    foreach ($registry->allDiscovered() as $slug => $manifest) {
+      $isInstalled = $registry->isInstalled($slug);
+      $isActive    = $tenantId !== null && $isInstalled
+        ? $registry->activeFor($slug, $tenantId)
+        : null;
 
-            $status = 'discovered';
+      $activeTenantCount = $isInstalled ? (int) ($activeCounts[$slug] ?? 0) : 0;
 
-            if ($isInstalled) {
-                $status = $isActive === true ? '<info>active</info>' : '<comment>installed</comment>';
-            }
+      $status = 'discovered';
 
-            $record = $registry->getInstalledRecord($slug);
+      if ($isInstalled) {
+        $status = $isActive === true ? '<info>active</info>' : '<comment>installed</comment>';
+      }
 
-            $rows[] = [
-                $slug,
-                $manifest->name,
-                $record?->version ?? $manifest->version,
-                $status,
-                $activeTenantCount,
-            ];
-        }
+      $record = $registry->getInstalledRecord($slug);
 
-        if (empty($rows)) {
-            $this->warn('No modules discovered. Add modules to '.config('modularity.modules_path').' or install via Composer.');
-
-            return self::SUCCESS;
-        }
-
-        $headers = ['Slug', 'Name', 'Version', 'Status', 'Active Tenants'];
-
-        $this->table($headers, $rows);
-
-        return self::SUCCESS;
+      $rows[] = [
+        $slug,
+        $manifest->name,
+        $record?->version ?? $manifest->version,
+        $status,
+        $activeTenantCount,
+      ];
     }
+
+    if (empty($rows)) {
+      $this->warn('No modules discovered. Add modules to ' . config('modularity.modules_path') . ' or install via Composer.');
+
+      return self::SUCCESS;
+    }
+
+    $headers = ['Slug', 'Name', 'Version', 'Status', 'Active Tenants'];
+
+    $this->table($headers, $rows);
+
+    return self::SUCCESS;
+  }
 }

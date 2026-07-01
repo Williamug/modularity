@@ -3,6 +3,7 @@
 namespace Modularity\Support\Abstracts;
 
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Modularity\Core\Module\ModuleManager;
@@ -21,10 +22,22 @@ abstract class ModuleServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        if (! $this->moduleIsActive()) {
+        if (! isset($this->slug)) {
+            Log::error(
+                '[Modularity] '.static::class.' is missing the required $slug property and cannot be booted. '
+                ."Define: protected string \$slug = 'your-module-slug';"
+            );
+
             return;
         }
 
+        // Routes, views, Livewire components and navigation are registered on EVERY
+        // boot, independent of the current tenant. The tenant isn't known yet at
+        // provider-boot time (session/auth tenancy resolves later, in middleware), so
+        // gating these on per-tenant activeness here would leave routes unregistered
+        // and every module URL would 404. Instead, gate access at request time with the
+        // `module.active` middleware, and let NavigationRegistry::forTenant() filter the
+        // menu per tenant when it is rendered.
         $this->loadModuleRoutes();
         $this->loadModuleViews();
         $this->loadLivewireComponents();

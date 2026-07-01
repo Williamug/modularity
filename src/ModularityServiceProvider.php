@@ -55,6 +55,7 @@ class ModularityServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
+        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
         $this->publishAssets();
         $this->registerCommands();
         $this->registerMiddlewareAlias();
@@ -64,11 +65,16 @@ class ModularityServiceProvider extends ServiceProvider
 
     private function registerCoreServices(): void
     {
-        $this->app->singleton('modularity.tenant', TenantContext::class);
+        // Bind the concrete classes as the singletons, then expose the dotted-name
+        // aliases pointing AT them. Binding the dotted name to the concrete string
+        // *and* aliasing the concrete back to the dotted name (as was done before)
+        // creates a resolution cycle — the container ping-pongs make()->resolve()
+        // forever and exhausts memory on the first resolution.
+        $this->app->singleton(TenantContext::class);
 
-        $this->app->singleton('modularity.registry', ModuleRegistry::class);
+        $this->app->singleton(ModuleRegistry::class);
 
-        $this->app->singleton('modularity.navigation', NavigationRegistry::class);
+        $this->app->singleton(NavigationRegistry::class);
 
         $this->app->singleton('modularity.resolver', function ($app) {
             $resolverNames = config('modularity.tenancy.resolvers', ['subdomain', 'domain', 'header', 'session']);
@@ -88,9 +94,9 @@ class ModularityServiceProvider extends ServiceProvider
 
         $this->app->singleton('modularity.loader', function ($app) {
             return new ModuleLoader(
-                app:           $app,
-                registry:      $app->make('modularity.registry'),
-                tenantContext: $app->make('modularity.tenant'),
+                app:         $app,
+                registry:    $app->make('modularity.registry'),
+                permissions: $app->make('modularity.permissions'),
             );
         });
 
@@ -115,8 +121,7 @@ class ModularityServiceProvider extends ServiceProvider
 
         $this->app->singleton(ModuleDeactivator::class, function ($app) {
             return new ModuleDeactivator(
-                registry: $app->make('modularity.registry'),
-                events:   $app->make('events'),
+                events: $app->make('events'),
             );
         });
 
@@ -136,11 +141,18 @@ class ModularityServiceProvider extends ServiceProvider
             );
         });
 
-        // Alias concrete classes to interface bindings
-        $this->app->alias('modularity.tenant', TenantContext::class);
-        $this->app->alias('modularity.registry', ModuleRegistry::class);
-        $this->app->alias('modularity.manager', ModuleManager::class);
-        $this->app->alias('modularity.navigation', NavigationRegistry::class);
+        // Expose dotted-name aliases pointing at the concrete singletons.
+        $this->app->alias(TenantContext::class, 'modularity.tenant');
+        $this->app->alias(ModuleRegistry::class, 'modularity.registry');
+        $this->app->alias(NavigationRegistry::class, 'modularity.navigation');
+        // Alias the concrete TenantResolver to its closure-built binding so the
+        // container can autowire ResolveTenantMiddleware (which type-hints the
+        // concrete class). Without this, autowiring fails on the resolver's
+        // `array $resolvers` constructor arg and the `resolve.tenant` middleware 500s.
+        $this->app->alias('modularity.resolver', TenantResolver::class);
+        // ModuleManager is bound under the dotted name via a closure (buildable),
+        // so aliasing the concrete class to it is safe and does not cycle.
+        $this->app->alias(ModuleManager::class, 'modularity.manager');
     }
 
     private function registerMarketplaceBindings(): void
@@ -155,16 +167,24 @@ class ModularityServiceProvider extends ServiceProvider
     private function registerPermissionDriver(): void
     {
         $this->app->singleton('modularity.permissions', function ($app) {
-            return new PermissionRegistry($app->make(PermissionDriverInterface::class));
+            return new PermissionRegistry(
+                $app->make(PermissionDriverInterface::class),
+                $app->make(ModuleRegistry::class),
+            );
         });
 
         $this->app->alias('modularity.permissions', PermissionRegistry::class);
 
-        $this->app->singleton(PermissionDriverInterface::class, function () {
-            return match (config('modularity.permissions.driver', 'gate')) {
+        $this->app->singleton(PermissionDriverInterface::class, function ($app) {
+            $driver = config('modularity.permissions.driver', 'gate');
+
+            return match ($driver) {
+                'gate'   => new GatePermissionDriver(),
                 'spatie' => new SpatiePermissionDriver(),
                 'null'   => new NullPermissionDriver(),
-                default  => new GatePermissionDriver(),
+                // Any other value is treated as a custom FQCN implementing
+                // PermissionDriverInterface, resolved through the container.
+                default  => $app->make($driver),
             };
         });
     }
@@ -186,8 +206,6 @@ class ModularityServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__.'/../stubs' => base_path('stubs/modularity'),
         ], 'modularity-stubs');
-
-        $this->loadMigrationsFrom(__DIR__.'/../database/migrations');
     }
 
     private function registerCommands(): void
@@ -215,6 +233,7 @@ class ModularityServiceProvider extends ServiceProvider
 
         if (method_exists($router, 'aliasMiddleware')) {
             $router->aliasMiddleware('resolve.tenant', \Modularity\Http\Middleware\ResolveTenantMiddleware::class);
+            $router->aliasMiddleware('module.active', \Modularity\Http\Middleware\EnsureModuleActive::class);
         }
     }
 

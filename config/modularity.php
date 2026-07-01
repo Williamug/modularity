@@ -46,16 +46,32 @@ return [
     |--------------------------------------------------------------------------
     | Tenancy
     |--------------------------------------------------------------------------
-    | resolvers: ordered list of strategies tried on each HTTP request until
-    |   one returns a non-null tenant ID.
+    | This package sits on top of your existing Laravel app — resolving WHICH
+    | tenant a request belongs to is your application's responsibility, not the
+    | package's. The recommended approach is to set the tenant yourself once you
+    | know it (e.g. in your own middleware or auth flow):
+    |
+    |     Tenant::set($user->tenant_id);
+    |
+    | resolvers: an optional, ordered list of built-in convenience strategies
+    |   tried on each HTTP request until one returns a non-null tenant ID. The
+    |   default is 'session' only (host-controlled and safe). The other built-ins
+    |   ('subdomain', 'domain', 'header') are OPT-IN — enable them only if you
+    |   understand that a value alone is not authorization. You may also list a
+    |   custom FQCN implementing TenantResolverInterface.
     | column: the tenant_id column name used across all module tables.
-    | model: optional FQCN of the host application's Tenant Eloquent model.
-    |   When set, resolvers can look up by slug/domain.
+    | model: optional FQCN of the host application's Tenant Eloquent model,
+    |   used only by the opt-in subdomain/domain/header resolvers.
+    | strict: when true, querying a BelongsToTenant model with NO tenant set
+    |   throws instead of returning every tenant's rows (fail closed rather than
+    |   open). The console is exempt so migrations/seeders/maintenance commands
+    |   still run unscoped. Off by default to preserve existing behavior.
     */
     'tenancy' => [
-        'resolvers' => ['subdomain', 'domain', 'header', 'session'],
+        'resolvers' => ['session'],
         'column'    => 'tenant_id',
         'model'     => env('MODULARITY_TENANT_MODEL', null),
+        'strict'    => env('MODULARITY_TENANCY_STRICT', false),
     ],
 
     /*
@@ -86,9 +102,17 @@ return [
     |--------------------------------------------------------------------------
     | Permissions Driver
     |--------------------------------------------------------------------------
-    | spatie  - requires spatie/laravel-permission (recommended)
-    | gate    - falls back to Laravel's built-in Gate (no extra package needed)
-    | null    - no-op; all permission checks return true (useful for testing)
+    | The package never requires any specific permission system — it only needs
+    | a driver that knows how to register a module's permissions and answer
+    | userCan() checks. Built-in options:
+    |
+    |   gate    - Laravel's built-in Gate (default, no extra package needed)
+    |   spatie  - optional integration with spatie/laravel-permission
+    |   null    - no-op; all permission checks return true (testing only)
+    |
+    | To use your own system, set this to the FQCN of a class implementing
+    | Modularity\Core\Permissions\Contracts\PermissionDriverInterface. It will
+    | be resolved from the container, so it may declare its own dependencies.
     */
     'permissions' => [
         'driver' => env('MODULARITY_PERMISSION_DRIVER', 'gate'),
