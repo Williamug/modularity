@@ -6,7 +6,7 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Support\Facades\Log;
 use Modularity\Core\Module\Exceptions\CircularDependencyException;
 use Modularity\Core\Module\Exceptions\InvalidManifestException;
-use Modularity\Core\Tenancy\TenantContext;
+use Modularity\Core\Permissions\PermissionRegistry;
 
 class ModuleLoader
 {
@@ -16,7 +16,7 @@ class ModuleLoader
     public function __construct(
         private readonly Application $app,
         private readonly ModuleRegistry $registry,
-        private readonly TenantContext $tenantContext,
+        private readonly PermissionRegistry $permissions,
     ) {}
 
     public function discover(): void
@@ -45,6 +45,14 @@ class ModuleLoader
             return;
         }
 
+        // Never auto-boot module providers on a real artisan invocation. Booting every
+        // installed module for every command (artisan list, key:generate, migrate, …) was
+        // the original freeze/memory cause, and module routes/views aren't needed there.
+        // We still boot during the test environment so the HTTP path is exercisable.
+        if ($this->app->runningInConsole() && ! $this->app->runningUnitTests()) {
+            return;
+        }
+
         try {
             $sorted = (new DependencyGraph($candidates))->resolve();
         } catch (CircularDependencyException $e) {
@@ -53,14 +61,12 @@ class ModuleLoader
             return;
         }
 
-        $tenantId = $this->tenantContext->id();
-
         foreach ($sorted as $manifest) {
-            $this->bootModule($manifest, $tenantId);
+            $this->bootModule($manifest);
         }
     }
 
-    private function bootModule(ManifestDTO $manifest, ?int $tenantId): void
+    private function bootModule(ManifestDTO $manifest): void
     {
         $installedRecord = $this->registry->getInstalledRecord($manifest->slug);
 
@@ -68,19 +74,15 @@ class ModuleLoader
             return;
         }
 
-        $isActive = $tenantId !== null
-            ? $this->registry->activeFor($manifest->slug, $tenantId)
-            : false;
-
-        // Only boot a module's providers when it is active for the current tenant.
-        // Do NOT auto-boot in CLI (runningInConsole). Booting all installed modules
-        // for every artisan command — including artisan list, key:generate, etc. —
-        // was the original freeze cause. Module CLI commands should be registered
-        // by the module's own provider only when needed (e.g. in a module:run command
-        // that accepts a --tenant option), not unconditionally on every CLI invocation.
-        if (! $isActive) {
-            return;
-        }
+        // Register the module's providers for EVERY installed module, independent of the
+        // current tenant. Routes, views and navigation are global registrations — the
+        // tenant isn't known yet at boot (session/auth tenancy resolves in middleware).
+        // Per-tenant access is enforced at request time by the `module.active` middleware,
+        // and NavigationRegistry::forTenant() filters menu items per tenant when rendered.
+        //
+        // Permissions are registered here too so their Gate abilities exist on every
+        // request (a host grants them via Gate::before / its own permission system).
+        $this->permissions->registerForModule($manifest->slug, $manifest->permissions);
 
         foreach ($manifest->providers as $providerClass) {
             if (! class_exists($providerClass)) {

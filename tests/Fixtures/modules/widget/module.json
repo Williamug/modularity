@@ -1,0 +1,14 @@
+{
+    "name": "Widget",
+    "slug": "widget",
+    "version": "1.0.0",
+    "description": "Fixture module used by the HTTP feature tests",
+    "providers": [
+        "Modularity\\Tests\\Fixtures\\WidgetServiceProvider"
+    ],
+    "permissions": [
+        "widget.view"
+    ],
+    "dependencies": [],
+    "compatibility": "^1.0"
+}

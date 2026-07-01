@@ -8,13 +8,13 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Table name. Prefix it (e.g. '{{kebab-slug}}_{{snake_name}}s') if a plain
+        // '{{snake_name}}s' might collide with an existing host-application table.
         Schema::create('{{table_prefix}}{{snake_name}}s', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('tenant_id')->index();
             // Add your columns here
             $table->timestamps();
-
-            $table->index('tenant_id');
         });
     }
 

@@ -110,7 +110,9 @@ class ModuleRegistry
             $cached = $this->cacheStore()->get($cacheKey);
 
             if ($cached !== null) {
-                $this->installed = $cached;
+                // Cached as plain attribute arrays (never live Eloquent models, which
+                // come back as __PHP_Incomplete_Class on any serializing store). Rehydrate.
+                $this->installed = $this->hydrateInstalled($cached);
 
                 return $this->installed;
             }
@@ -129,10 +131,40 @@ class ModuleRegistry
         $this->installed = $records;
 
         if ($cacheEnabled) {
-            $this->cacheStore()->put($cacheKey, $records, $cacheTtl);
+            // Store primitives only. Caching the Eloquent models directly breaks on
+            // every serializing cache store (database/file/redis/memcached): the next
+            // process reads them back as __PHP_Incomplete_Class and getInstalledRecord()
+            // throws a TypeError during boot.
+            $this->cacheStore()->put($cacheKey, $this->dehydrateInstalled($records), $cacheTtl);
         }
 
         return $this->installed;
+    }
+
+    /**
+     * @param  array<string, InstalledModule>  $records
+     * @return array<string, array<string, mixed>>
+     */
+    private function dehydrateInstalled(array $records): array
+    {
+        return array_map(static fn (InstalledModule $m): array => $m->getAttributes(), $records);
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $rows
+     * @return array<string, InstalledModule>
+     */
+    private function hydrateInstalled(array $rows): array
+    {
+        $models = [];
+
+        foreach ($rows as $slug => $attributes) {
+            // newFromBuilder() marks the model as existing (loaded from storage), so it
+            // behaves exactly like a record read straight from the database.
+            $models[$slug] = (new InstalledModule())->newFromBuilder($attributes);
+        }
+
+        return $models;
     }
 
     private function getTenantActive(int $tenantId): array

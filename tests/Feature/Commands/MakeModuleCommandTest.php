@@ -25,6 +25,24 @@ it('scaffolds module directory tree', function () {
     expect($modulePath.'/src/Providers/InventoryServiceProvider.php')->toBeFile();
     expect($modulePath.'/src/Models/Inventory.php')->toBeFile();
     expect($modulePath.'/resources/views/index.blade.php')->toBeFile();
+    expect($modulePath.'/tests/InventoryTest.php')->toBeFile();
+});
+
+it('generates a syntactically valid, token-free starter test', function () {
+    $this->artisan('module:make-module', ['name' => 'Library'])
+        ->assertExitCode(0);
+
+    $testPath = $this->tmpModulesPath.'/Library/tests/LibraryTest.php';
+    $contents = file_get_contents($testPath);
+
+    expect($contents)->toContain("installAndActivateModule('library'")
+        ->and($contents)->toContain('InteractsWithModules')
+        ->and($contents)->not->toContain('{{PascalName}}')
+        ->and($contents)->not->toContain('{{kebab-slug}}');
+
+    // The comment block must not contain a premature `*/` that breaks parsing.
+    expect(shell_exec('php -l '.escapeshellarg($testPath).' 2>&1'))
+        ->toContain('No syntax errors detected');
 });
 
 it('module json has correct slug', function () {

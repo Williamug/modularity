@@ -31,10 +31,13 @@ abstract class ModuleServiceProvider extends ServiceProvider
             return;
         }
 
-        if (! $this->moduleIsActive()) {
-            return;
-        }
-
+        // Routes, views, Livewire components and navigation are registered on EVERY
+        // boot, independent of the current tenant. The tenant isn't known yet at
+        // provider-boot time (session/auth tenancy resolves later, in middleware), so
+        // gating these on per-tenant activeness here would leave routes unregistered
+        // and every module URL would 404. Instead, gate access at request time with the
+        // `module.active` middleware, and let NavigationRegistry::forTenant() filter the
+        // menu per tenant when it is rendered.
         $this->loadModuleRoutes();
         $this->loadModuleViews();
         $this->loadLivewireComponents();

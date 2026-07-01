@@ -94,9 +94,9 @@ class ModularityServiceProvider extends ServiceProvider
 
         $this->app->singleton('modularity.loader', function ($app) {
             return new ModuleLoader(
-                app:           $app,
-                registry:      $app->make('modularity.registry'),
-                tenantContext: $app->make('modularity.tenant'),
+                app:         $app,
+                registry:    $app->make('modularity.registry'),
+                permissions: $app->make('modularity.permissions'),
             );
         });
 
@@ -145,6 +145,11 @@ class ModularityServiceProvider extends ServiceProvider
         $this->app->alias(TenantContext::class, 'modularity.tenant');
         $this->app->alias(ModuleRegistry::class, 'modularity.registry');
         $this->app->alias(NavigationRegistry::class, 'modularity.navigation');
+        // Alias the concrete TenantResolver to its closure-built binding so the
+        // container can autowire ResolveTenantMiddleware (which type-hints the
+        // concrete class). Without this, autowiring fails on the resolver's
+        // `array $resolvers` constructor arg and the `resolve.tenant` middleware 500s.
+        $this->app->alias('modularity.resolver', TenantResolver::class);
         // ModuleManager is bound under the dotted name via a closure (buildable),
         // so aliasing the concrete class to it is safe and does not cycle.
         $this->app->alias(ModuleManager::class, 'modularity.manager');
@@ -228,6 +233,7 @@ class ModularityServiceProvider extends ServiceProvider
 
         if (method_exists($router, 'aliasMiddleware')) {
             $router->aliasMiddleware('resolve.tenant', \Modularity\Http\Middleware\ResolveTenantMiddleware::class);
+            $router->aliasMiddleware('module.active', \Modularity\Http\Middleware\EnsureModuleActive::class);
         }
     }
 

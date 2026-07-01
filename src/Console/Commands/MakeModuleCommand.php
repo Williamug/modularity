@@ -40,6 +40,10 @@ class MakeModuleCommand extends Command
     $this->line("  1. Register autoloading in composer.json: \"Modules\\\\{$name}\\\\\": \"Modules/{$name}/src/\"");
     $this->line("  2. composer dump-autoload");
     $this->line("  3. php artisan module:install {$slug}");
+    $this->line('');
+    $this->line("A starter test was generated at Modules/{$name}/tests/{$name}Test.php.");
+    $this->line('  To run module tests, add their path to phpunit.xml once:');
+    $this->line('    <testsuite name="Modules"><directory>Modules/*/tests</directory></testsuite>');
 
     if ($this->option('livewire')) {
       $componentName = $name . 'Index';
@@ -85,7 +89,11 @@ class MakeModuleCommand extends Command
       '{{PascalName}}'   => $name,
       '{{kebab-slug}}'   => $slug,
       '{{snake_name}}'   => $this->toSnake($name),
-      '{{table_prefix}}' => $slug . '_',
+      // No automatic prefix: the old `{{slug}}_` prefix produced awkward doubled
+      // names like `customer_customers`. The default table is just the pluralized
+      // snake name (e.g. `customers`); authors can prefix it in the migration if it
+      // risks colliding with a host table.
+      '{{table_prefix}}' => '',
     ];
 
     $files = [
@@ -100,6 +108,7 @@ class MakeModuleCommand extends Command
       'routes/web.stub'                  => 'routes/web.php',
       'routes/api.stub'                  => 'routes/api.php',
       'resources/views/index.blade.stub' => 'resources/views/index.blade.php',
+      'tests/FeatureTest.stub'           => "tests/{$name}Test.php",
     ];
 
     if ($this->option('livewire')) {

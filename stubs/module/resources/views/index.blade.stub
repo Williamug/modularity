@@ -1,4 +1,7 @@
-<x-layouts.app :title="__('{{PascalName}}')">
+{{-- Extends your application's layout component. The Livewire/Flux starter kit
+     registers it as the namespaced <x-layouts::app>; plain Laravel apps often use
+     <x-app-layout> or <x-layouts.app>. Adjust this tag to match your host app. --}}
+<x-layouts::app :title="__('{{PascalName}}')">
     <div class="flex items-center justify-between mb-6">
         <h1 class="text-2xl font-bold">{{ __('{{PascalName}}') }}</h1>
         <a href="{{ route('{{kebab-slug}}.create') }}" class="btn btn-primary">
@@ -44,4 +47,4 @@
 
         {{ $items->links() }}
     </div>
-</x-layouts.app>
+</x-layouts::app>
