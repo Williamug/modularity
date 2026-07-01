@@ -62,11 +62,16 @@ return [
     | column: the tenant_id column name used across all module tables.
     | model: optional FQCN of the host application's Tenant Eloquent model,
     |   used only by the opt-in subdomain/domain/header resolvers.
+    | strict: when true, querying a BelongsToTenant model with NO tenant set
+    |   throws instead of returning every tenant's rows (fail closed rather than
+    |   open). The console is exempt so migrations/seeders/maintenance commands
+    |   still run unscoped. Off by default to preserve existing behavior.
     */
     'tenancy' => [
         'resolvers' => ['session'],
         'column'    => 'tenant_id',
         'model'     => env('MODULARITY_TENANT_MODEL', null),
+        'strict'    => env('MODULARITY_TENANCY_STRICT', false),
     ],
 
     /*
